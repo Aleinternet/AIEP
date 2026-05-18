@@ -1,0 +1,10 @@
+docs/chrome-*/
+docs/**/*.log
+docs/**/*.tmp
+docs/**/*.sqlite
+docs/**/*.sqlite3
+docs/**/*.ldb
+docs/**/*.dat
+docs/**/*.pma
+*.ps1
+iniciar-servidor.*

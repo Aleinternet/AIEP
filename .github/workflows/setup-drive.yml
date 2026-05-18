@@ -1,0 +1,31 @@
+name: Preparar Google Drive AIEP
+
+on:
+  workflow_dispatch:
+
+jobs:
+  setup-drive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        working-directory: cloud/drive-sync
+        run: npm install
+
+      - name: Crear carpetas y subir archivos iniciales
+        working-directory: cloud/drive-sync
+        env:
+          GOOGLE_DRIVE_AIEP_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_AIEP_FOLDER_ID }}
+          GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL }}
+          GOOGLE_PRIVATE_KEY: ${{ secrets.GOOGLE_PRIVATE_KEY }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+        run: npm run setup:drive

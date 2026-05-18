@@ -1,0 +1,20 @@
+# Secretos
+.env
+.env.*
+!.env.example
+vercel/.env
+vercel/.env.*
+!vercel/.env.example
+
+# Exportaciones con datos personales.
+supabase/seed/*.csv
+supabase/seed/*.xlsx
+supabase/seed/*.json
+
+# Backups locales.
+backups/
+*.bak
+
+# Cache de runtimes.
+__pycache__/
+*.pyc

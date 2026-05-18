@@ -1,0 +1,20 @@
+{
+  "name": "aiep-drive-sync",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "setup:drive": "tsx src/setup-drive.ts",
+    "import:pending": "tsx src/import-pending.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.43.4",
+    "googleapis": "^140.0.1",
+    "xlsx": "^0.18.5",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.4",
+    "tsx": "^4.19.1",
+    "typescript": "^5.5.4"
+  }
+}

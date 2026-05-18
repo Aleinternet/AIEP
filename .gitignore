@@ -1,0 +1,46 @@
+# Secretos y configuracion local
+.env
+.env.*
+!.env.example
+aiep-*.json
+service-account*.json
+*service_account*.json
+*credentials*.json
+*credenciales*.json
+*creds*.json
+token*.json
+oauth*.json
+cloud/drive-sync-python/oauth-token.json
+Credenciales.txt
+credenciales*.txt
+cloud/drive-sync-python/ejecutar_setup_drive_oauth.ps1
+cloud/drive-sync-python/ejecutar_setup_drive_oauth.ps1.example
+cloud/drive-sync-python/ejecutar_setup_drive_oauth*.ps1*
+*.pem
+*.key
+
+# Datos sensibles exportados para migracion
+cloud/supabase/seed/*.csv
+cloud/supabase/seed/*.xlsx
+cloud/supabase/seed/*.json
+web/data/app-data.js
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+*.pdf
+
+# Perfiles temporales de Chrome usados para verificacion local
+web/docs/chrome-*/
+
+# Cache y temporales
+__pycache__/
+*.pyc
+node_modules/
+.next/
+dist/
+.vercel/
+
+# Archivos locales de arranque
+web/iniciar-servidor.ps1
+web/iniciar-servidor.bat

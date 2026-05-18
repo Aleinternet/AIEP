@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ABG RECOV | Plataforma Cobranzas AIEP</title>
+    <link rel="stylesheet" href="assets/css/styles.css?v=20260514-2">
+  </head>
+  <body class="logged-out">
+    <section class="login-screen" id="loginScreen">
+      <button id="openInternalLogin" class="internal-entry-btn" type="button">Ingreso ejecutivo</button>
+      <div class="login-layout">
+        <section class="login-card client-card">
+          <div class="brand login-brand">
+            <span class="brand-mark">AR</span>
+            <div>
+              <strong>Portal de pago AIEP</strong>
+              <small>Consulta de deuda y comprobantes</small>
+            </div>
+          </div>
+          <h1>Ingreso con ClaveÚnica</h1>
+          <p class="login-help">Ingrese el RUT del titular o alumno. En producción este paso debe redirigir a la API OAuth de ClaveÚnica Chile.</p>
+          <form id="loginForm" class="login-form">
+            <label>RUT titular o alumno
+              <input id="loginUser" autocomplete="username" placeholder="Ej: 12.345.678-9" required>
+            </label>
+            <input id="loginPass" type="password" hidden>
+            <button type="submit" class="claveunica-btn">Ingresar con ClaveÚnica</button>
+            <div id="loginError" class="form-error" role="alert"></div>
+          </form>
+        </section>
+        <aside class="login-card internal-card" id="internalCard" hidden>
+          <div class="panel-head">
+            <h2>Ingreso ejecutivo</h2>
+            <button id="closeInternalLogin" type="button">Cerrar</button>
+          </div>
+          <p class="login-help">Acceso interno para call center y jefatura.</p>
+          <form id="internalLoginForm" class="login-form">
+            <label>Usuario
+              <input id="internalUser" autocomplete="username" placeholder="Usuario interno">
+            </label>
+            <label>Contraseña
+              <input id="internalPass" type="password" autocomplete="current-password" placeholder="Contraseña">
+            </label>
+            <button type="submit">Ingresar al área interna</button>
+            <div id="internalLoginError" class="form-error" role="alert"></div>
+          </form>
+        </aside>
+      </div>
+    </section>
+
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <span class="brand-mark">AR</span>
+        <div>
+          <strong>ABG RECOV</strong>
+          <small id="roleLabel">Sin sesión</small>
+        </div>
+      </div>
+      <button id="sidebarToggle" class="sidebar-toggle" type="button" title="Ocultar menú">‹</button>
+      <nav class="nav" id="mainNav" aria-label="Principal"></nav>
+      <button id="logoutBtn" class="logout-btn">Cerrar sesión</button>
+    </aside>
+
+    <main class="app" id="app">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow" id="sectionEyebrow">Sistema multifuncional de cobranza</p>
+          <h1 id="viewTitle">Dashboard</h1>
+          <div class="session-meta">
+            <span id="entryDateTime">Ingreso: --</span>
+            <span id="ufValue">UF: cargando</span>
+            <span id="dollarValue">Dólar: cargando</span>
+          </div>
+        </div>
+        <div class="searchbox" id="globalSearchBox">
+          <span>Buscar</span>
+          <input id="globalSearch" type="search" placeholder="RUT, nombre, alumno o estado">
+        </div>
+      </header>
+
+      <section class="view" id="debtorHome">
+        <div class="debtor-page">
+          <section class="portal-card debtor-main">
+            <p class="eyebrow">Portal deudor</p>
+            <h2 id="debtorPortalName">Consulta de deuda</h2>
+            <div id="debtorPortalDebt"></div>
+            <form id="debtorUploadForm" class="upload-box">
+              <label>Adjuntar comprobante de pago
+                <input type="file" id="debtorReceiptFile" accept=".pdf,.jpg,.jpeg,.png,.webp" required>
+              </label>
+              <button type="submit">Guardar comprobante</button>
+            </form>
+            <div id="debtorUploadStatus" class="history"></div>
+          </section>
+          <aside class="payment-box" id="debtorPaymentBox"></aside>
+        </div>
+      </section>
+
+      <section class="view" id="executiveHome">
+        <div class="workbench">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Deudores priorizados</h2>
+              <span>ordenados de mayor a menor saldo capital</span>
+            </div>
+            <div class="toolbar">
+              <select id="execStateFilter"><option value="">Todos los estados</option></select>
+              <select id="execContactFilter">
+                <option value="">Todo contacto</option>
+                <option value="phone">Con teléfono</option>
+                <option value="email">Con correo</option>
+                <option value="none">Sin contacto</option>
+              </select>
+              <button id="clearExecFilters" type="button">Limpiar filtros</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>Titular</th><th>RUT</th><th>Estado</th><th>Saldo capital</th><th>Oferta</th><th>Contacto</th></tr>
+                </thead>
+                <tbody id="executiveRows"></tbody>
+              </table>
+            </div>
+          </section>
+          <aside class="panel side-panel">
+            <div class="panel-head">
+              <h2>Gestión <span id="selectedCommentIcon" class="comment-badge" hidden></span></h2>
+              <span id="execSelectedStatus">Seleccione deudor</span>
+            </div>
+            <div id="executiveDetail" class="detail-empty">Haga clic en un deudor para ver ficha, contactos y bitácora.</div>
+          </aside>
+        </div>
+      </section>
+
+      <div class="modal-backdrop" id="agreementModal" hidden>
+        <section class="modal">
+          <div class="panel-head">
+            <h2>Nuevo convenio</h2>
+            <button type="button" id="closeAgreementModal">Cerrar</button>
+          </div>
+          <form id="agreementForm" class="form-grid">
+            <label>Tipo de convenio
+              <select id="agreementType" name="type">
+                <option value="liquidacion">Liquidación total</option>
+                <option value="cuotas">Pago en cuotas</option>
+              </select>
+            </label>
+            <label>Monto total convenio
+              <input id="agreementAmount" name="amount" inputmode="numeric" placeholder="$0" required>
+            </label>
+            <label id="installmentsLabel">Cantidad de cuotas
+              <input id="agreementInstallments" name="installments" type="number" min="1" max="36" value="1">
+            </label>
+            <label>Fecha inicio de pago
+              <input id="agreementStartDate" name="startDate" type="date" required>
+            </label>
+            <label class="wide">Observaciones
+              <textarea id="agreementNotes" name="notes" rows="4" placeholder="Observaciones del convenio"></textarea>
+            </label>
+            <div class="wide" id="agreementCalendar"></div>
+            <button type="submit">Guardar convenio</button>
+          </form>
+        </section>
+      </div>
+
+      <section class="view" id="managementHome">
+        <div class="kpi-grid">
+          <article class="kpi"><span>Total cartera</span><strong id="kpiTotal">0</strong><small>registros cargados</small></article>
+          <article class="kpi"><span>Saldo capital</span><strong id="kpiCapital">$0</strong><small>base de liquidación</small></article>
+          <article class="kpi"><span>Ofertas registradas</span><strong id="kpiOferta">$0</strong><small>monto negociado por ejecutivo</small></article>
+          <article class="kpi"><span>Recaudado local</span><strong id="kpiCollected">$0</strong><small>comprobantes marcados</small></article>
+          <article class="kpi"><span>Capital condonado</span><strong id="kpiLostCapital">$0</strong><small>diferencia capital vs oferta</small></article>
+          <article class="kpi"><span>Gestiones</span><strong id="kpiEntries">0</strong><small>registros en bitácora</small></article>
+          <article class="kpi"><span>Tasa gestión</span><strong id="kpiManagedRate">0%</strong><small>cartera con bitácora</small></article>
+          <article class="kpi"><span>Comprobantes</span><strong id="kpiReceipts">0</strong><small>subidos localmente</small></article>
+        </div>
+        <div class="toolbar">
+          <label>Desde<input type="date" id="reportFrom"></label>
+          <label>Hasta<input type="date" id="reportTo"></label>
+          <select id="reportStateFilter"><option value="">Todos los estados</option></select>
+          <button id="clearReportFilters">Limpiar filtros</button>
+        </div>
+        <div class="dashboard-grid">
+          <section class="panel">
+            <div class="panel-head"><h2>Estados de cartera</h2><span id="generatedAt"></span></div>
+            <div id="stateBars" class="bars"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><h2>Gestiones por resultado</h2><span>bitácora local</span></div>
+            <div id="managementBars" class="bars"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><h2>Gestiones por canal</h2><span>llamado, WhatsApp, correo</span></div>
+            <div id="channelBars" class="bars"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><h2>Embudo operativo</h2><span>avance de gestión</span></div>
+            <div id="funnelBars" class="bars"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><h2>Contactabilidad</h2><span>calidad base y marcas</span></div>
+            <div class="contact-score">
+              <div><strong id="withPhone">0</strong><span>con teléfono</span></div>
+              <div><strong id="withEmail">0</strong><span>con correo</span></div>
+              <div><strong id="withoutContact">0</strong><span>sin datos</span></div>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><h2>Distribución contactos</h2><span>vista circular</span></div>
+            <div class="donut-row">
+              <div id="contactDonut" class="donut"></div>
+              <div id="contactLegend" class="legend"></div>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><h2>Top deuda pendiente</h2><span>mayores saldos</span></div>
+            <div id="topDebtBars" class="bars"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><h2>Recaudación por fuente</h2><span>cartola cargada</span></div>
+            <div id="bankSourceBars" class="bars"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><h2>Indicadores críticos</h2><span>lectura ejecutiva</span></div>
+            <div id="criticalIndicators" class="indicator-grid"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><h2>Cartola bancaria</h2><span>carga jefatura</span></div>
+            <form id="bankUploadForm" class="upload-box compact">
+              <label>Subir cartola
+                <input type="file" id="bankStatementFile" accept=".xlsx,.xls,.csv,.txt" required>
+              </label>
+              <button type="submit">Guardar cartola</button>
+            </form>
+            <div id="bankUploadStatus" class="history"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="managementBank">
+        <div class="panel">
+          <div class="panel-head"><h2>Bandeja de conciliación</h2><span>cartola base y archivos subidos</span></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Fecha</th><th>Fuente</th><th>Nombre/RUT</th><th>Monto</th><th>Glosa</th><th>Estado sugerido</th></tr></thead>
+              <tbody id="bankRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="managementAgreements">
+        <div class="panel">
+          <div class="panel-head"><h2>Registro de convenios</h2><span>liquidaciones y cuotas</span></div>
+          <div class="toolbar">
+            <label>Desde<input type="date" id="agreementFrom"></label>
+            <label>Hasta<input type="date" id="agreementTo"></label>
+            <select id="agreementStateFilter"><option value="">Todos los estados</option></select>
+            <button id="clearAgreementFilters" type="button">Limpiar filtros</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Fecha</th><th>Tipo</th><th>Deudor</th><th>Alumno</th><th>Monto</th><th>Próximo pago</th><th>Estado</th></tr></thead>
+              <tbody id="agreementRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="localFiles">
+        <div class="panel">
+          <div class="panel-head"><h2>Repositorio local</h2><span>comprobantes y cartolas</span></div>
+          <div id="fileRepository" class="file-list"></div>
+        </div>
+      </section>
+    </main>
+
+    <script src="data/app-data.js?v=20260514-2"></script>
+    <script src="assets/js/app.js?v=20260514-2"></script>
+  </body>
+</html>
