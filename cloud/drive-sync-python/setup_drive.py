@@ -26,7 +26,7 @@ from googleapiclient.http import MediaFileUpload
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_KEY_FILE = ROOT / "aiep-496715-c806474bf4f6.json"
-ROOT_FOLDER_ID = os.getenv("GOOGLE_DRIVE_AIEP_FOLDER_ID", "1VzcG1kLr9noQR9UPvzRVZAU2peWwLe1i")
+ROOT_FOLDER_ID = os.getenv("GOOGLE_DRIVE_AIEP_FOLDER_ID") or "1VzcG1kLr9noQR9UPvzRVZAU2peWwLe1i"
 KEY_FILE = Path(os.getenv("GOOGLE_SERVICE_ACCOUNT_KEY_FILE", str(DEFAULT_KEY_FILE))).resolve()
 TOKEN_FILE = Path(os.getenv("GOOGLE_OAUTH_TOKEN_FILE", str(Path(__file__).resolve().parent / "oauth-token.json"))).resolve()
 SCOPES = ["https://www.googleapis.com/auth/drive"]
