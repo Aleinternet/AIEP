@@ -1,4 +1,25 @@
-const data = window.ABG_DATA;
+const data = window.ABG_DATA || {
+  generatedAt: new Date().toISOString(),
+  businessRules: {
+    discountRate: 0.5,
+    offerFormula: "saldo_capital * 50%",
+    commissionRate: 0.25,
+    bankAccount: "Banco BCI - Comercial Remesa SpA - RUT 76.976.117-9 - Cuenta Corriente 27826341",
+  },
+  summary: {
+    totalRegistros: 0,
+    saldoCapital: 0,
+    deudaTotal: 0,
+    montoOferta: 0,
+    comision25SobreOferta: 0,
+    estados: [],
+    ejecutivos: [],
+    regiones: [],
+    contactabilidad: { conCorreo: 0, conTelefono: 0, sinDatos: 0 },
+    cartola: { movimientos: 0, montoIngresos: 0, porFuente: [] },
+  },
+  debtors: [],
+};
 const fmtMoney = new Intl.NumberFormat("es-CL", { style: "currency", currency: "CLP", maximumFractionDigits: 0 });
 const fmtNum = new Intl.NumberFormat("es-CL");
 const today = () => new Date().toISOString().slice(0, 10);
