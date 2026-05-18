@@ -1,5 +1,8 @@
 name: Importar cartera desde Google Drive
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 on:
   workflow_dispatch:
   push:
@@ -19,49 +22,41 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Revisar credenciales disponibles
+        id: preflight
+        env:
+          GOOGLE_DRIVE_AIEP_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_AIEP_FOLDER_ID || '1VzcG1kLr9noQR9UPvzRVZAU2peWwLe1i' }}
+          GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL || 'aiep-drive@aiep-496715.iam.gserviceaccount.com' }}
+          GOOGLE_PRIVATE_KEY: ${{ secrets.GOOGLE_PRIVATE_KEY }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          ready=true
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::notice::Importacion omitida: faltan secrets de Supabase."
+            ready=false
+          fi
+          if [ -z "$GOOGLE_PRIVATE_KEY" ] && { [ -z "$GOOGLE_OAUTH_CLIENT_ID" ] || [ -z "$GOOGLE_OAUTH_CLIENT_SECRET" ] || [ -z "$GOOGLE_OAUTH_REFRESH_TOKEN" ]; }; then
+            echo "::notice::Importacion omitida: falta GOOGLE_PRIVATE_KEY o el trio OAuth de Google Drive."
+            ready=false
+          fi
+          echo "ready=$ready" >> "$GITHUB_OUTPUT"
+
       - name: Setup Python
+        if: steps.preflight.outputs.ready == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install dependencies
+        if: steps.preflight.outputs.ready == 'true'
         run: python -m pip install -r cloud/drive-sync-python/requirements.txt
 
-      - name: Validar GOOGLE_DRIVE_AIEP_FOLDER_ID
-        env:
-          GOOGLE_DRIVE_AIEP_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_AIEP_FOLDER_ID || '1VzcG1kLr9noQR9UPvzRVZAU2peWwLe1i' }}
-        run: test -n "$GOOGLE_DRIVE_AIEP_FOLDER_ID"
-
-      - name: Validar GOOGLE_SERVICE_ACCOUNT_EMAIL
-        env:
-          GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL || 'aiep-drive@aiep-496715.iam.gserviceaccount.com' }}
-        run: test -n "$GOOGLE_SERVICE_ACCOUNT_EMAIL"
-
-      - name: Validar credenciales Drive
-        env:
-          GOOGLE_PRIVATE_KEY: ${{ secrets.GOOGLE_PRIVATE_KEY }}
-          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
-          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
-          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
-        run: |
-          if [ -n "$GOOGLE_PRIVATE_KEY" ]; then
-            exit 0
-          fi
-          test -n "$GOOGLE_OAUTH_CLIENT_ID"
-          test -n "$GOOGLE_OAUTH_CLIENT_SECRET"
-          test -n "$GOOGLE_OAUTH_REFRESH_TOKEN"
-
-      - name: Validar SUPABASE_URL
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-        run: test -n "$SUPABASE_URL"
-
-      - name: Validar SUPABASE_SERVICE_ROLE_KEY
-        env:
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: test -n "$SUPABASE_SERVICE_ROLE_KEY"
-
       - name: Probar acceso Drive
+        if: steps.preflight.outputs.ready == 'true'
         env:
           GOOGLE_DRIVE_AIEP_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_AIEP_FOLDER_ID || '1VzcG1kLr9noQR9UPvzRVZAU2peWwLe1i' }}
           GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL || 'aiep-drive@aiep-496715.iam.gserviceaccount.com' }}
@@ -79,6 +74,7 @@ jobs:
           PY
 
       - name: Probar acceso Supabase
+        if: steps.preflight.outputs.ready == 'true'
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -93,6 +89,7 @@ jobs:
           PY
 
       - name: Importar archivos pendientes
+        if: steps.preflight.outputs.ready == 'true'
         env:
           GOOGLE_DRIVE_AIEP_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_AIEP_FOLDER_ID || '1VzcG1kLr9noQR9UPvzRVZAU2peWwLe1i' }}
           GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL || 'aiep-drive@aiep-496715.iam.gserviceaccount.com' }}
