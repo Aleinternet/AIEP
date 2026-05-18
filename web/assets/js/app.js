@@ -19,6 +19,7 @@ const data = window.ABG_DATA || {
     cartola: { movimientos: 0, montoIngresos: 0, porFuente: [] },
   },
   debtors: [],
+  bankMovements: [],
 };
 const fmtMoney = new Intl.NumberFormat("es-CL", { style: "currency", currency: "CLP", maximumFractionDigits: 0 });
 const fmtNum = new Intl.NumberFormat("es-CL");
@@ -37,6 +38,49 @@ let session = null;
 let selectedDebtor = null;
 let executiveRows = [];
 let sessionStartedAt = null;
+
+function applyRemoteData(remote) {
+  if (!remote) return;
+  data.generatedAt = remote.generatedAt || new Date().toISOString();
+  data.businessRules = remote.businessRules || data.businessRules;
+  data.summary = remote.summary || data.summary;
+  data.debtors = remote.debtors || [];
+  data.bankMovements = remote.bankMovements || [];
+}
+
+function mergeDebtor(debtor) {
+  if (!debtor) return null;
+  const index = data.debtors.findIndex((item) => item.id === debtor.id);
+  if (index >= 0) data.debtors[index] = debtor;
+  else data.debtors.unshift(debtor);
+  return debtor;
+}
+
+async function requestJson(url, options = {}) {
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+  });
+  const json = await response.json().catch(() => ({}));
+  if (!response.ok || json.ok === false) throw new Error(json.error || `Error HTTP ${response.status}`);
+  return json;
+}
+
+async function loadPortfolioFromApi(user, pass) {
+  const json = await requestJson("/api/bootstrap", {
+    method: "POST",
+    body: JSON.stringify({ user, pass }),
+  });
+  applyRemoteData(json.data);
+}
+
+async function loadDebtorFromApi(rut) {
+  const json = await requestJson(`/api/debtor?rut=${encodeURIComponent(rut)}`);
+  return mergeDebtor(json.debtor);
+}
 
 const views = {
   deudor: [{ id: "debtorHome", label: "Mi deuda" }, { id: "localFiles", label: "Mis archivos" }],
@@ -268,24 +312,53 @@ function login(role, debtor = null) {
   openRequestedOrDefault();
 }
 
-function handleLogin(event) {
+async function handleLogin(event) {
   event.preventDefault();
   const user = $("loginUser").value.trim();
   $("loginError").textContent = "";
 
-  const debtor = data.debtors.find((item) => debtorRutMatch(item, user));
+  let debtor = data.debtors.find((item) => debtorRutMatch(item, user));
+  if (!debtor) {
+    try {
+      $("loginError").textContent = "Consultando deuda...";
+      debtor = await loadDebtorFromApi(user);
+      $("loginError").textContent = "";
+    } catch {
+      debtor = null;
+    }
+  }
   if (debtor) return login("deudor", debtor);
 
   $("loginError").textContent = "RUT no encontrado. Ingrese RUT de titular o alumno.";
 }
 
-function handleInternalLogin(event) {
+async function handleInternalLogin(event) {
   event.preventDefault();
   const user = normalizeText($("internalUser").value.trim());
   const pass = $("internalPass").value;
   $("internalLoginError").textContent = "";
-  if (user === "callcenter" && pass === "123456") return login("ejecutivo");
-  if (user === "remesa" && pass === "654321") return login("jefatura");
+  if (user === "callcenter" && pass === "123456") {
+    try {
+      $("internalLoginError").textContent = "Cargando cartera...";
+      await loadPortfolioFromApi("callcenter", pass);
+      $("internalLoginError").textContent = "";
+      return login("ejecutivo");
+    } catch (error) {
+      $("internalLoginError").textContent = error.message || "No se pudo cargar la cartera.";
+      return;
+    }
+  }
+  if (user === "remesa" && pass === "654321") {
+    try {
+      $("internalLoginError").textContent = "Cargando cartera...";
+      await loadPortfolioFromApi("remesa", pass);
+      $("internalLoginError").textContent = "";
+      return login("jefatura");
+    } catch (error) {
+      $("internalLoginError").textContent = error.message || "No se pudo cargar la cartera.";
+      return;
+    }
+  }
   $("internalLoginError").textContent = "Credenciales internas inválidas.";
 }
 
