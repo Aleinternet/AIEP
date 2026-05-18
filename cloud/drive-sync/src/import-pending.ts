@@ -174,6 +174,17 @@ function dedupeContacts(contacts: ContactRow[]) {
   });
 }
 
+function dedupeDebtors<T extends { id: string }>(debtors: T[]) {
+  const seen = new Set<string>();
+  return debtors.filter((debtor) => {
+    const key = debtor.id.trim();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    debtor.id = key;
+    return true;
+  });
+}
+
 function canImport(file: drive_v3.Schema$File) {
   const name = file.name?.toLowerCase() ?? "";
   return SUPPORTED_MIME_TYPES.has(file.mimeType ?? "")
@@ -263,9 +274,9 @@ async function main() {
       const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
       const rows = utils.sheet_to_json<RawRow>(firstSheet, { defval: "" });
       const mappedRows = rows.map((raw) => ({ raw, debtor: mapDebtor(raw) }));
-      const debtors = mappedRows
+      const debtors = dedupeDebtors(mappedRows
         .map(({ debtor }) => debtor)
-        .filter((row) => row.rut_titular_normalizado || row.rut_alumno_normalizado);
+        .filter((row) => row.rut_titular_normalizado || row.rut_alumno_normalizado));
       const contacts = dedupeContacts(mappedRows.flatMap(({ raw, debtor }) => (
         debtor.id ? mapContacts(raw, debtor.id) : []
       )));
