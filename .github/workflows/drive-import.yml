@@ -37,10 +37,19 @@ jobs:
           GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL || 'aiep-drive@aiep-496715.iam.gserviceaccount.com' }}
         run: test -n "$GOOGLE_SERVICE_ACCOUNT_EMAIL"
 
-      - name: Validar GOOGLE_PRIVATE_KEY
+      - name: Validar credenciales Drive
         env:
           GOOGLE_PRIVATE_KEY: ${{ secrets.GOOGLE_PRIVATE_KEY }}
-        run: test -n "$GOOGLE_PRIVATE_KEY"
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+        run: |
+          if [ -n "$GOOGLE_PRIVATE_KEY" ]; then
+            exit 0
+          fi
+          test -n "$GOOGLE_OAUTH_CLIENT_ID"
+          test -n "$GOOGLE_OAUTH_CLIENT_SECRET"
+          test -n "$GOOGLE_OAUTH_REFRESH_TOKEN"
 
       - name: Validar SUPABASE_URL
         env:
