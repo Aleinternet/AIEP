@@ -22,6 +22,16 @@ Agregar:
 GOOGLE_DRIVE_AIEP_FOLDER_ID
 GOOGLE_SERVICE_ACCOUNT_EMAIL
 GOOGLE_PRIVATE_KEY
+GOOGLE_OAUTH_CLIENT_ID
+GOOGLE_OAUTH_CLIENT_SECRET
+GOOGLE_OAUTH_REFRESH_TOKEN
+SUPABASE_URL
+SUPABASE_SERVICE_ROLE_KEY
+```
+
+Para Vercel, agregar al menos:
+
+```text
 SUPABASE_URL
 SUPABASE_SERVICE_ROLE_KEY
 ```
@@ -64,9 +74,17 @@ Luego ejecutar manualmente en GitHub Actions:
 Importar cartera desde Google Drive
 ```
 
-Tambien queda programado todos los dias a las 09:00 UTC.
+Tambien queda programado cada 30 minutos.
 
-Los archivos procesados se mueven a `Procesados/YYYY-MM`. Si fallan, se mueven a `Rechazados` y se registra el error en Supabase.
+Los archivos procesados se mueven a `Procesados/YYYY-MM`. Si fallan, se mueven a `Rechazados` y se registra el error en Supabase, tabla `drive_imports`.
+
+Si Supabase fue creado solo con `cloud/supabase/schema.sql` antes de agregar Drive, ejecutar una vez:
+
+```text
+cloud/supabase/migrations/20260518_drive_imports_and_files.sql
+```
+
+Ese paso crea la tabla `drive_imports` que necesita el importador.
 
 ## Deploy Vercel
 

@@ -38,8 +38,10 @@ AIEP/
 Google Drive sera la fuente documental:
 
 - Nuevas carteras o actualizaciones se suben a `01_Fuentes_Cartera/Pendientes`.
-- El sistema las procesa y actualiza Supabase.
-- Luego mueve o copia el resultado logico a `Procesados` o `Rechazados`.
+- GitHub Actions revisa esa carpeta cada 30 minutos y tambien se puede ejecutar manualmente.
+- Cada Excel, CSV o Google Sheet encontrado se procesa y actualiza Supabase.
+- Luego mueve el archivo a `Procesados/YYYY-MM` o `Rechazados`.
+- El resultado queda registrado en la tabla `drive_imports`.
 - Todo comprobante/cartola subido desde la pagina se guarda en Drive y deja metadatos en Supabase.
   - Deudor: `03_Comprobantes_Deudores/YYYY-MM/RUT`
   - Call center: `04_Comprobantes_CallCenter/YYYY-MM/RUT`
@@ -47,19 +49,55 @@ Google Drive sera la fuente documental:
 
 Supabase sigue siendo la base operacional porque permite filtros, roles, reportes y concurrencia. Drive guarda los archivos originales, respaldos y evidencia.
 
+## Flujo para agregar nuevos clientes
+
+1. Subir el archivo a:
+
+```text
+AIEP/01_Fuentes_Cartera/Pendientes
+```
+
+2. Esperar hasta 30 minutos o ejecutar manualmente:
+
+```text
+GitHub > AIEP > Actions > Importar cartera desde Google Drive > Run workflow
+```
+
+3. Revisar el resultado:
+
+```text
+Procesados/YYYY-MM  -> archivo importado correctamente
+Rechazados          -> archivo con error
+Supabase drive_imports -> detalle de filas, contactos y errores
+```
+
+4. Recargar la pagina de Vercel. La cartera visible se actualiza desde Supabase, no desde archivos locales.
+
+El importador acepta `.xlsx`, `.xls`, `.csv` y Google Sheets nativos. Reconoce nombres de columnas comunes como `rut_titular`, `rut_deudor`, `rut_alumno`, `rut_estudiante`, `saldo_capital`, `intereses_mora`, `gastos_cobranza`, `correo_1`, `telefono_1`, etc.
+
 ## Variables necesarias
 
-Configurar en Vercel y GitHub Actions:
+Configurar en GitHub Actions:
 
 ```text
 GOOGLE_DRIVE_AIEP_FOLDER_ID=1VzcG1kLr9noQR9UPvzRVZAU2peWwLe1i
 GOOGLE_SERVICE_ACCOUNT_EMAIL=...
 GOOGLE_PRIVATE_KEY=...
+GOOGLE_OAUTH_CLIENT_ID=...
+GOOGLE_OAUTH_CLIENT_SECRET=...
+GOOGLE_OAUTH_REFRESH_TOKEN=...
 SUPABASE_URL=...
 SUPABASE_SERVICE_ROLE_KEY=...
 ```
 
 La carpeta `AIEP` debe estar compartida como editor con el correo de la cuenta de servicio.
+
+Configurar en Vercel para que la pagina lea datos:
+
+```text
+SUPABASE_URL=...
+SUPABASE_SERVICE_ROLE_KEY=...
+```
 
 ## Archivos locales que se subiran al preparar Drive
 

@@ -3,7 +3,7 @@ name: Importar cartera desde Google Drive
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 9 * * *"
+    - cron: "*/30 * * * *"
 
 jobs:
   import-pending:
