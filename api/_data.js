@@ -30,6 +30,22 @@ async function supabaseFetch(path, options = {}) {
   return response.json();
 }
 
+async function supabaseFetchAll(path, pageSize = 1000) {
+  const rows = [];
+  let from = 0;
+
+  while (true) {
+    const page = await supabaseFetch(path, {
+      headers: { Range: `${from}-${from + pageSize - 1}` },
+    });
+    rows.push(...page);
+    if (page.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return rows;
+}
+
 function mapDebtor(row, contacts = []) {
   const correos = contacts.filter((item) => item.type === "correo").map((item) => item.value);
   const telefonos = contacts.filter((item) => item.type === "telefono").map((item) => item.value);
@@ -93,12 +109,8 @@ function buildSummary(debtors) {
 }
 
 async function loadPortfolio() {
-  const debtRows = await supabaseFetch("debtors?select=*&order=deuda_total.desc", {
-    headers: { Range: "0-4999" },
-  });
-  const contacts = await supabaseFetch("contacts?select=debtor_id,type,value", {
-    headers: { Range: "0-20000" },
-  });
+  const debtRows = await supabaseFetchAll("debtors?select=*&order=deuda_total.desc,id.asc");
+  const contacts = await supabaseFetchAll("contacts?select=debtor_id,type,value&order=debtor_id.asc,type.asc,value.asc");
   const contactsByDebtor = new Map();
   for (const contact of contacts) {
     if (!contactsByDebtor.has(contact.debtor_id)) contactsByDebtor.set(contact.debtor_id, []);

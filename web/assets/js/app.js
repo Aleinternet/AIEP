@@ -399,7 +399,7 @@ function renderExecutiveRows() {
     <tr data-index="${index}" class="${rowClass(d)} ${selectedDebtor?.id === d.id ? "selected-row" : ""}">
       <td><span class="agreement-dot ${agreementDotClass(d)}"></span>${commentCount(d) ? `<span class="comment-badge row-comment-badge" title="Tiene comentarios internos"></span>` : ""}<strong>${d.nombreTitular || "Sin nombre"}</strong><br><span class="muted">${d.nombreAlumno || "Alumno no informado"}</span></td>
       <td>${d.rutTitular || d.rutDeudor}</td>
-      <td><span class="status-pill">${d.estado}</span></td>
+      <td>${statusPill(d)}</td>
       <td>${fmtMoney.format(d.saldoCapital)}</td>
       <td><strong>${getOfferAmount(d) ? fmtMoney.format(getOfferAmount(d)) : "Sin convenio"}</strong></td>
       <td>${contactLabel(d)}</td>
@@ -423,6 +423,23 @@ function rowClass(debtor) {
 function effectiveState(debtor) {
   if (getOffer(debtor)) return "convenio en curso";
   return normalizeText(debtor.estado);
+}
+
+function statusClassFromState(state) {
+  const normalized = normalizeText(state);
+  if (normalized.includes("convenio")) return "status-agreement";
+  if (normalized.includes("pagado")) return "status-paid";
+  if (normalized.includes("acuerdo roto")) return "status-broken";
+  return "status-neutral";
+}
+
+function statusPill(debtor) {
+  const label = displayState(debtor);
+  return `<span class="status-pill ${statusClassFromState(label)}">${label}</span>`;
+}
+
+function statusPillFromState(state) {
+  return `<span class="status-pill ${statusClassFromState(state)}">${state || "Pendiente"}</span>`;
 }
 
 function agreementDotClass(debtor) {
@@ -458,7 +475,7 @@ function renderExecutiveDetail() {
   const d = selectedDebtor;
   if (!d) return;
   const offer = getOffer(d);
-  setText("execSelectedStatus", d.estado);
+  setText("execSelectedStatus", displayState(d));
   $("selectedCommentIcon").hidden = commentCount(d) === 0;
   $("selectedCommentIcon").title = `${commentCount(d)} comentario(s) interno(s)`;
   $("executiveDetail").className = "";
@@ -1003,7 +1020,7 @@ function renderAgreementRegistry() {
       <td><strong>${debtor.nombreAlumno || ""}</strong><br><span class="muted">${debtor.rutAlumno || ""}</span></td>
       <td>${fmtMoney.format(agreement.amount)}</td>
       <td>${nextPaymentDate(agreement) || "Sin fecha"}</td>
-      <td><span class="status-pill">${displayState(debtor)}</span></td>
+      <td>${statusPill(debtor)}</td>
     </tr>
   `).join("") : `<tr><td colspan="7">Sin convenios para los filtros seleccionados.</td></tr>`;
 }
@@ -1070,7 +1087,7 @@ function renderBankRows() {
         <td><strong>${m.nombre || "Sin nombre"}</strong><br><span class="muted">${m.rut || "RUT no informado"}</span></td>
         <td>${fmtMoney.format(m.monto)}</td>
         <td>${m.glosa}</td>
-        <td><span class="status-pill">${state}</span></td>
+        <td>${statusPillFromState(state)}</td>
       </tr>
     `;
   }).join("");

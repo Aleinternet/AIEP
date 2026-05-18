@@ -100,15 +100,19 @@ th, td { padding: 12px 14px; border-bottom: 1px solid var(--line); text-align: l
 th { font-size: 12px; text-transform: uppercase; color: var(--muted); background: #f8fafc; position: sticky; top: 0; }
 td { font-size: 14px; }
 tr:hover td { background: #eef6ff; }
-.status-pill { display: inline-flex; border-radius: 999px; padding: 4px 8px; background: #ecfdf5; color: #047857; font-size: 12px; font-weight: 700; }
+.status-pill { display: inline-flex; border-radius: 999px; padding: 4px 8px; background: #eef2ff; color: #3730a3; font-size: 12px; font-weight: 800; }
+.status-pill.status-broken { background: #fee2e2; color: #b42318; }
+.status-pill.status-paid { background: #dcfce7; color: #15803d; }
+.status-pill.status-agreement { background: #f3e8ff; color: #7e22ce; }
+.status-pill.status-neutral { background: #eef2ff; color: #3730a3; }
 .settlement-row td, .settlement-row { background: #f4efff !important; }
 .installment-row td, .installment-row { background: #fff0f6 !important; }
-.paid-row td { color: #64748b; background: #f8fafc !important; }
+.paid-row td { color: #166534; background: #f0fdf4 !important; }
 .selected-row td { background: #fff7cc !important; }
 .selected-row:hover td { background: #fff1a6 !important; }
 .settlement-row:hover td { background: #eadcff !important; }
 .installment-row:hover td { background: #ffddeb !important; }
-.paid-row:hover td { background: #eef2f7 !important; }
+.paid-row:hover td { background: #dcfce7 !important; }
 .agreement-dot { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin-right: 7px; background: transparent; vertical-align: middle; }
 .agreement-dot.show { background: #facc15; }
 .agreement-dot.orange { background: #fb923c; }
