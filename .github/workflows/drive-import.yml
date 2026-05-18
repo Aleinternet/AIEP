@@ -8,6 +8,7 @@ on:
     paths:
       - ".github/workflows/drive-import.yml"
       - "cloud/drive-sync/**"
+      - "cloud/drive-sync-python/**"
   schedule:
     - cron: "*/30 * * * *"
 
@@ -25,6 +26,62 @@ jobs:
 
       - name: Install dependencies
         run: python -m pip install -r cloud/drive-sync-python/requirements.txt
+
+      - name: Validar GOOGLE_DRIVE_AIEP_FOLDER_ID
+        env:
+          GOOGLE_DRIVE_AIEP_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_AIEP_FOLDER_ID }}
+        run: test -n "$GOOGLE_DRIVE_AIEP_FOLDER_ID"
+
+      - name: Validar GOOGLE_SERVICE_ACCOUNT_EMAIL
+        env:
+          GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL }}
+        run: test -n "$GOOGLE_SERVICE_ACCOUNT_EMAIL"
+
+      - name: Validar GOOGLE_PRIVATE_KEY
+        env:
+          GOOGLE_PRIVATE_KEY: ${{ secrets.GOOGLE_PRIVATE_KEY }}
+        run: test -n "$GOOGLE_PRIVATE_KEY"
+
+      - name: Validar SUPABASE_URL
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        run: test -n "$SUPABASE_URL"
+
+      - name: Validar SUPABASE_SERVICE_ROLE_KEY
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: test -n "$SUPABASE_SERVICE_ROLE_KEY"
+
+      - name: Probar acceso Drive
+        env:
+          GOOGLE_DRIVE_AIEP_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_AIEP_FOLDER_ID }}
+          GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL }}
+          GOOGLE_PRIVATE_KEY: ${{ secrets.GOOGLE_PRIVATE_KEY }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+        run: |
+          python - <<'PY'
+          import sys
+          sys.path.insert(0, "cloud/drive-sync-python")
+          from setup_drive import drive_service, ROOT_FOLDER_ID
+          service = drive_service()
+          service.files().get(fileId=ROOT_FOLDER_ID, fields="id,name", supportsAllDrives=True).execute()
+          PY
+
+      - name: Probar acceso Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          python - <<'PY'
+          import os
+          import requests
+          url = os.environ["SUPABASE_URL"].rstrip("/") + "/rest/v1/debtors?select=*&limit=1"
+          key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+          response = requests.get(url, headers={"apikey": key, "Authorization": f"Bearer {key}"}, timeout=60)
+          response.raise_for_status()
+          PY
 
       - name: Importar archivos pendientes
         env:
