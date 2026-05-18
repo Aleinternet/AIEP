@@ -34,7 +34,7 @@ jobs:
 
       - name: Validar GOOGLE_SERVICE_ACCOUNT_EMAIL
         env:
-          GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL }}
+          GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL || 'aiep-drive@aiep-496715.iam.gserviceaccount.com' }}
         run: test -n "$GOOGLE_SERVICE_ACCOUNT_EMAIL"
 
       - name: Validar GOOGLE_PRIVATE_KEY
@@ -55,7 +55,7 @@ jobs:
       - name: Probar acceso Drive
         env:
           GOOGLE_DRIVE_AIEP_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_AIEP_FOLDER_ID || '1VzcG1kLr9noQR9UPvzRVZAU2peWwLe1i' }}
-          GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL }}
+          GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL || 'aiep-drive@aiep-496715.iam.gserviceaccount.com' }}
           GOOGLE_PRIVATE_KEY: ${{ secrets.GOOGLE_PRIVATE_KEY }}
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
@@ -86,7 +86,7 @@ jobs:
       - name: Importar archivos pendientes
         env:
           GOOGLE_DRIVE_AIEP_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_AIEP_FOLDER_ID || '1VzcG1kLr9noQR9UPvzRVZAU2peWwLe1i' }}
-          GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL }}
+          GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL || 'aiep-drive@aiep-496715.iam.gserviceaccount.com' }}
           GOOGLE_PRIVATE_KEY: ${{ secrets.GOOGLE_PRIVATE_KEY }}
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
