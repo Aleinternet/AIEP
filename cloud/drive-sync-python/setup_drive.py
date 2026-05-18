@@ -84,6 +84,8 @@ def drive_service():
     oauth_client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
     oauth_client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET")
     oauth_refresh_token = os.getenv("GOOGLE_OAUTH_REFRESH_TOKEN")
+    service_account_email = os.getenv("GOOGLE_SERVICE_ACCOUNT_EMAIL")
+    service_account_private_key = os.getenv("GOOGLE_PRIVATE_KEY")
 
     if TOKEN_FILE.exists() and not (oauth_client_id and oauth_client_secret and oauth_refresh_token):
         token_data = json.loads(TOKEN_FILE.read_text(encoding="utf-8"))
@@ -98,6 +100,16 @@ def drive_service():
             token_uri="https://oauth2.googleapis.com/token",
             client_id=oauth_client_id,
             client_secret=oauth_client_secret,
+            scopes=SCOPES,
+        )
+    elif service_account_email and service_account_private_key:
+        credentials = service_account.Credentials.from_service_account_info(
+            {
+                "type": "service_account",
+                "client_email": service_account_email,
+                "private_key": service_account_private_key.replace("\\n", "\n"),
+                "token_uri": "https://oauth2.googleapis.com/token",
+            },
             scopes=SCOPES,
         )
     else:

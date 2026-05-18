@@ -18,17 +18,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          node-version: "22"
+          python-version: "3.12"
 
       - name: Install dependencies
-        working-directory: cloud/drive-sync
-        run: npm install
+        run: python -m pip install -r cloud/drive-sync-python/requirements.txt
 
       - name: Importar archivos pendientes
-        working-directory: cloud/drive-sync
         env:
           GOOGLE_DRIVE_AIEP_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_AIEP_FOLDER_ID }}
           GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL }}
@@ -38,4 +36,4 @@ jobs:
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: npm run import:pending
+        run: python cloud/drive-sync-python/import_pending.py

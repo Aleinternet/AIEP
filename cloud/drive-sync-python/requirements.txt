@@ -2,3 +2,5 @@ google-api-python-client==2.172.0
 google-auth==2.40.3
 google-auth-oauthlib==1.2.2
 truststore==0.10.4
+openpyxl==3.1.5
+requests==2.32.3
