@@ -39,8 +39,12 @@ public static class Win32Input {
   [DllImport("user32.dll")]
   public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
 
+  [DllImport("user32.dll")]
+  public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+
   public const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
   public const uint MOUSEEVENTF_LEFTUP = 0x0004;
+  public const uint KEYEVENTF_KEYUP = 0x0002;
   public const int SW_RESTORE = 9;
 }
 "@
@@ -158,7 +162,7 @@ function Invoke-SendButtonByAutomation {
 
   foreach ($button in $buttons) {
     $name = [string]$button.Current.Name
-    if ($name -match "(?i)\b(enviar|send)\b") {
+    if (Test-SendButtonName -Name $name) {
       try {
         Write-HelperLog "Boton enviar encontrado por UIA: '$name'"
         $invoke = $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
@@ -187,6 +191,24 @@ function Invoke-SendButtonByAutomation {
   return $false
 }
 
+function Test-SendButtonName {
+  param([string]$Name)
+
+  $value = ($Name -replace "\s+", " ").Trim().ToLowerInvariant()
+  if ([string]::IsNullOrWhiteSpace($value)) { return $false }
+  if ($value -match "comentario|comentarios|comment|comments|feedback|opinion|sugerencia") {
+    Write-HelperLog "Boton descartado por no ser envio de chat: '$Name'"
+    return $false
+  }
+
+  return @(
+    "enviar",
+    "send",
+    "enviar mensaje",
+    "send message"
+  ) -contains $value
+}
+
 function Click-At {
   param(
     [int]$X,
@@ -200,6 +222,78 @@ function Click-At {
   [Win32Input]::mouse_event([Win32Input]::MOUSEEVENTF_LEFTUP, 0, 0, 0, [UIntPtr]::Zero)
 }
 
+function Send-VirtualKey {
+  param([byte]$Key)
+
+  [Win32Input]::keybd_event($Key, 0, 0, [UIntPtr]::Zero)
+  Start-Sleep -Milliseconds 80
+  [Win32Input]::keybd_event($Key, 0, [Win32Input]::KEYEVENTF_KEYUP, [UIntPtr]::Zero)
+}
+
+function Send-ControlKey {
+  param([byte]$Key)
+
+  [Win32Input]::keybd_event(0x11, 0, 0, [UIntPtr]::Zero)
+  Start-Sleep -Milliseconds 80
+  [Win32Input]::keybd_event($Key, 0, 0, [UIntPtr]::Zero)
+  Start-Sleep -Milliseconds 80
+  [Win32Input]::keybd_event($Key, 0, [Win32Input]::KEYEVENTF_KEYUP, [UIntPtr]::Zero)
+  Start-Sleep -Milliseconds 80
+  [Win32Input]::keybd_event(0x11, 0, [Win32Input]::KEYEVENTF_KEYUP, [UIntPtr]::Zero)
+}
+
+function Click-MessageInputFallback {
+  $proc = Get-WhatsAppWindowProcess
+  if ($null -eq $proc) { return $false }
+
+  $rect = New-Object Win32Input+RECT
+  if (-not [Win32Input]::GetWindowRect($proc.MainWindowHandle, [ref]$rect)) {
+    return $false
+  }
+
+  $width = $rect.Right - $rect.Left
+  $x = [int]($rect.Left + ($width * 0.70))
+  $y = [int]($rect.Bottom - 52)
+  Write-HelperLog "Click candidato caja de mensaje: x=$x y=$y"
+  Click-At -X $x -Y $y
+  Start-Sleep -Milliseconds 500
+  return $true
+}
+
+function Prepare-MessageInput {
+  param([string]$Text)
+
+  if (-not (Click-MessageInputFallback)) {
+    Write-HelperLog "No se pudo enfocar caja de mensaje."
+    return $false
+  }
+
+  $oldClipboard = $null
+  try {
+    $oldClipboard = Get-Clipboard -Raw -ErrorAction SilentlyContinue
+  } catch {
+    $oldClipboard = $null
+  }
+
+  try {
+    Set-Clipboard -Value $Text
+    Start-Sleep -Milliseconds 250
+    Send-ControlKey -Key 0x41
+    Start-Sleep -Milliseconds 200
+    Send-ControlKey -Key 0x56
+    Start-Sleep -Milliseconds 700
+    Write-HelperLog "Mensaje pegado en caja de chat."
+    return $true
+  } catch {
+    Write-HelperLog "No se pudo pegar mensaje: $($_.Exception.Message)"
+    return $false
+  } finally {
+    if ($null -ne $oldClipboard) {
+      try { Set-Clipboard -Value $oldClipboard } catch { }
+    }
+  }
+}
+
 function Invoke-SendButtonByCoordinates {
   $proc = Get-WhatsAppWindowProcess
   if ($null -eq $proc) { return $false }
@@ -210,11 +304,8 @@ function Invoke-SendButtonByCoordinates {
   }
 
   $points = @(
-    @($rect.Right - 44, $rect.Bottom - 44),
-    @($rect.Right - 64, $rect.Bottom - 44),
-    @($rect.Right - 84, $rect.Bottom - 44),
-    @($rect.Right - 44, $rect.Bottom - 58),
-    @($rect.Right - 72, $rect.Bottom - 58)
+    @($rect.Right - 54, $rect.Bottom - 52),
+    @($rect.Right - 72, $rect.Bottom - 52)
   )
 
   foreach ($point in $points) {
@@ -229,19 +320,22 @@ function Invoke-SendButtonByCoordinates {
 }
 
 function Press-Send {
-  param([object]$WhatsApp)
+  param(
+    [object]$WhatsApp,
+    [string]$Text
+  )
 
   if ($null -eq $WhatsApp) { return $false }
   $shell = $WhatsApp.Shell
 
+  Prepare-MessageInput -Text $Text | Out-Null
+
   if (Invoke-SendButtonByAutomation) { return $true }
 
-  Write-HelperLog "Fallback teclado Enter."
+  Write-HelperLog "Fallback teclado Enter con foco en caja de chat."
+  Send-VirtualKey -Key 0x0D
+  Start-Sleep -Milliseconds 1000
   $shell.SendKeys("~")
-  Start-Sleep -Milliseconds 700
-  $shell.SendKeys("^{ENTER}")
-  Start-Sleep -Milliseconds 700
-  $shell.SendKeys("^~")
   Start-Sleep -Milliseconds 700
 
   if (Invoke-SendButtonByCoordinates) { return $true }
@@ -256,7 +350,8 @@ if (-not $payload.phone) { throw "Falta telefono." }
 if (-not $payload.message) { throw "Falta mensaje." }
 
 $phone = [string]$payload.phone
-$message = [Uri]::EscapeDataString([string]$payload.message)
+$rawMessage = [string]$payload.message
+$message = [Uri]::EscapeDataString($rawMessage)
 $whatsAppUrl = "whatsapp://send?phone=$phone&text=$message"
 
 $currentWhatsApp = Activate-WhatsApp -Seconds 2
@@ -271,7 +366,7 @@ if ($null -eq $whatsApp) {
   throw "No se pudo activar WhatsApp Desktop."
 }
 
-if (-not (Press-Send -WhatsApp $whatsApp)) {
+if (-not (Press-Send -WhatsApp $whatsApp -Text $rawMessage)) {
   throw "No se pudo presionar Enviar en WhatsApp Desktop."
 }
 Start-Sleep -Seconds 3
