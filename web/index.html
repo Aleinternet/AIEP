@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>ABG RECOV | Plataforma Cobranzas AIEP</title>
-    <link rel="stylesheet" href="assets/css/styles.css?v=20260514-2">
+    <link rel="stylesheet" href="assets/css/styles.css?v=20260519-1">
   </head>
   <body class="logged-out">
     <section class="login-screen" id="loginScreen">
@@ -112,12 +112,48 @@
                 <option value="email">Con correo</option>
                 <option value="none">Sin contacto</option>
               </select>
+              <select id="execRecentFilter">
+                <option value="">Toda gestion</option>
+                <option value="last3">Con gestion ultimos 3 dias</option>
+                <option value="none3">Sin gestion ultimos 3 dias</option>
+                <option value="never">Sin gestion registrada</option>
+              </select>
+              <label>Dias sin gestion
+                <input id="execNoManagementDays" type="number" min="0" placeholder="Ej: 7">
+              </label>
               <button id="clearExecFilters" type="button">Limpiar filtros</button>
             </div>
+            <section class="campaign-panel">
+              <div class="campaign-head">
+                <div>
+                  <h3>Envios masivos</h3>
+                  <span id="campaignStatus">Sin campana activa</span>
+                </div>
+                <button id="stopCampaign" type="button" class="danger-soft">Detener</button>
+              </div>
+              <div class="campaign-grid">
+                <label>Cantidad
+                  <input id="campaignLimit" type="number" min="1" max="300" value="20">
+                </label>
+                <label>Intervalo segundos
+                  <input id="campaignInterval" type="number" min="5" max="600" value="20">
+                </label>
+                <label>Deuda desde
+                  <input id="campaignDebtMin" inputmode="numeric" placeholder="$0">
+                </label>
+                <label>Deuda hasta
+                  <input id="campaignDebtMax" inputmode="numeric" placeholder="Sin tope">
+                </label>
+                <div class="campaign-actions">
+                  <button id="startEmailCampaign" type="button" class="mail-action">Correo masivo</button>
+                  <button id="startWhatsappCampaign" type="button" class="whatsapp-action">WhatsApp masivo</button>
+                </div>
+              </div>
+            </section>
             <div class="table-wrap">
               <table>
                 <thead>
-                  <tr><th>Titular</th><th>RUT</th><th>Estado</th><th>Saldo capital</th><th>Oferta</th><th>Contacto</th></tr>
+                  <tr><th>Titular</th><th>RUT</th><th>Estado</th><th>Saldo capital</th><th>Oferta</th><th>Contacto</th><th>Ult. 3 dias</th><th>Dias s/gestion</th></tr>
                 </thead>
                 <tbody id="executiveRows"></tbody>
               </table>
@@ -277,6 +313,6 @@
     </main>
 
     <script src="data/app-data.js?v=20260514-2"></script>
-    <script src="assets/js/app.js?v=20260514-2"></script>
+    <script src="assets/js/app.js?v=20260519-1"></script>
   </body>
 </html>

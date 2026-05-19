@@ -24,6 +24,13 @@ const data = window.ABG_DATA || {
 const fmtMoney = new Intl.NumberFormat("es-CL", { style: "currency", currency: "CLP", maximumFractionDigits: 0 });
 const fmtNum = new Intl.NumberFormat("es-CL");
 const today = () => new Date().toISOString().slice(0, 10);
+const PORTAL_URL = "https://project-6x64h.vercel.app/web/";
+const TRANSFER_DETAILS = [
+  "Banco BCI",
+  "Comercial Remesa SpA",
+  "RUT 76.976.117-9",
+  "Cuenta Corriente 27826341",
+];
 
 const store = {
   entries: readJson("abg_entries", []),
@@ -38,6 +45,11 @@ let session = null;
 let selectedDebtor = null;
 let executiveRows = [];
 let sessionStartedAt = null;
+let campaignTimer = null;
+let campaignQueue = [];
+let campaignChannel = "";
+let campaignTotal = 0;
+let whatsappWindow = null;
 
 function applyRemoteData(remote) {
   if (!remote) return;
@@ -180,7 +192,18 @@ function agreementTypeLabel(agreement) {
 }
 
 function escapeAttr(value) {
-  return String(value || "").replace(/"/g, "&quot;");
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 function debtorRutMatch(debtor, rut) {
@@ -379,13 +402,64 @@ function fillFilters() {
   }
 }
 
+function entriesForDebtor(debtor) {
+  return store.entries.filter((entry) => entry.debtorId === debtor.id);
+}
+
+function dateOnly(value) {
+  return String(value || "").slice(0, 10);
+}
+
+function daysBetween(dateA, dateB) {
+  const a = new Date(`${dateA}T00:00:00`);
+  const b = new Date(`${dateB}T00:00:00`);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return null;
+  return Math.floor((b - a) / 86400000);
+}
+
+function recentEntriesForDebtor(debtor, days = 3) {
+  const start = new Date(`${today()}T00:00:00`);
+  start.setDate(start.getDate() - (days - 1));
+  const startIso = start.toISOString().slice(0, 10);
+  return entriesForDebtor(debtor).filter((entry) => dateOnly(entry.date) >= startIso);
+}
+
+function daysSinceLastManagement(debtor) {
+  const dates = entriesForDebtor(debtor).map((entry) => dateOnly(entry.date)).filter(Boolean).sort();
+  if (!dates.length) return null;
+  return daysBetween(dates[dates.length - 1], today());
+}
+
+function managementSummary(debtor) {
+  const recent = recentEntriesForDebtor(debtor);
+  if (!recent.length) return `<span class="management-chip empty">Sin gestion 3d</span>`;
+  const channels = [...new Set(recent.map((entry) => entry.channel).filter(Boolean))].slice(0, 2).join(" / ");
+  return `<span class="management-chip">${recent.length} gest.</span><small>${channels || "Sin canal"}</small>`;
+}
+
+function lastManagementAgeLabel(debtor) {
+  const days = daysSinceLastManagement(debtor);
+  if (days === null) return "Nunca";
+  if (days === 0) return "Hoy";
+  return `${days} dia${days === 1 ? "" : "s"}`;
+}
+
 function executiveFilter(debtor) {
   const q = normalizeText($("globalSearch").value);
   const state = $("execStateFilter").value;
   const contact = $("execContactFilter").value;
+  const recent = $("execRecentFilter")?.value || "";
+  const minDaysWithoutManagement = Number($("execNoManagementDays")?.value || 0);
   const matchesQuery = !q || normalizeText([debtor.nombreTitular, debtor.rutTitular, debtor.rutAlumno, debtor.nombreAlumno, debtor.estado].join(" ")).includes(q);
   const matchesContact = !contact || (contact === "phone" && debtor.telefonos.length) || (contact === "email" && debtor.correos.length) || (contact === "none" && !debtor.telefonos.length && !debtor.correos.length);
-  return matchesQuery && (!state || displayState(debtor) === state) && matchesContact;
+  const recentCount = recentEntriesForDebtor(debtor).length;
+  const age = daysSinceLastManagement(debtor);
+  const matchesRecent = !recent
+    || (recent === "last3" && recentCount > 0)
+    || (recent === "none3" && recentCount === 0)
+    || (recent === "never" && age === null);
+  const matchesAge = !minDaysWithoutManagement || age === null || age >= minDaysWithoutManagement;
+  return matchesQuery && (!state || displayState(debtor) === state) && matchesContact && matchesRecent && matchesAge;
 }
 
 function renderExecutiveRows() {
@@ -403,6 +477,8 @@ function renderExecutiveRows() {
       <td>${fmtMoney.format(d.saldoCapital)}</td>
       <td><strong>${getOfferAmount(d) ? fmtMoney.format(getOfferAmount(d)) : "Sin convenio"}</strong></td>
       <td>${contactLabel(d)}</td>
+      <td>${managementSummary(d)}</td>
+      <td>${lastManagementAgeLabel(d)}</td>
     </tr>
   `).join("");
   document.querySelectorAll("#executiveRows tr").forEach((row) => {
@@ -552,6 +628,8 @@ function renderExecutiveDetail() {
   if (deleteButton) deleteButton.addEventListener("click", deleteAgreement);
   $("execManagementForm").addEventListener("submit", saveManagementEntry);
   document.querySelectorAll("[data-contact-action]").forEach((btn) => btn.addEventListener("click", updateContactStatus));
+  document.querySelectorAll("[data-contact-save]").forEach((btn) => btn.addEventListener("click", saveContactMeta));
+  document.querySelectorAll("[data-contact-delete]").forEach((btn) => btn.addEventListener("click", deleteContactMeta));
   document.querySelectorAll("[data-copy-message]").forEach((node) => node.addEventListener("click", copyContactMessage));
 }
 
@@ -690,29 +768,84 @@ function renderContacts(debtor, type, values) {
   if (!values.length) return `<div class="detail-empty">Sin ${type === "telefono" ? "teléfonos" : "correos"} registrados.</div>`;
   return values.map((value) => {
     const saved = store.contacts[contactKey(debtor, type, value)] || {};
-    const cls = saved.status === "ok" ? "ok" : saved.status === "ignore" ? "ignore" : "";
-    const label = saved.status === "ok" ? "Funciona" : saved.status === "ignore" ? "No considerar" : "Sin marcar";
+    const cls = saved.status === "ok" ? "ok" : saved.status === "ignore" ? "ignore" : saved.status === "manual" ? "manual" : "";
     const message = buildContactMessage(debtor, type, value);
     return `
       <article class="contact-item ${cls}">
-        <button type="button" class="contact-copy" data-copy-message="${escapeAttr(message)}" data-type="${type}" data-value="${escapeAttr(value)}" title="Abrir mensaje">${value}</button>
-        <span>${label}${saved.comment ? `: ${saved.comment}` : ""}</span>
-        <div>
-          <button type="button" data-contact-action="ok" data-type="${type}" data-value="${value}">Funciona</button>
-          <button type="button" data-contact-action="ignore" data-type="${type}" data-value="${value}">No considerar</button>
+        <button type="button" class="contact-copy" data-copy-message="${escapeAttr(message)}" data-type="${type}" data-value="${escapeAttr(value)}" title="Abrir mensaje">${escapeHtml(value)}</button>
+        <span class="contact-status">${contactStatusLabel(saved.status)}${saved.date ? ` - ${new Date(saved.date).toLocaleDateString("es-CL")}` : ""}</span>
+        <div class="contact-meta">
+          <label>Categoria
+            <select data-contact-category data-type="${type}" data-value="${escapeAttr(value)}">
+              ${contactCategoryOptions(saved.category)}
+            </select>
+          </label>
+          <label>Comentario
+            <input data-contact-comment data-type="${type}" data-value="${escapeAttr(value)}" value="${escapeAttr(saved.comment || "")}" placeholder="Comentario">
+          </label>
+        </div>
+        <div class="contact-actions">
+          <button type="button" data-contact-action="ok" data-type="${type}" data-value="${escapeAttr(value)}">Funciona</button>
+          <button type="button" data-contact-action="ignore" data-type="${type}" data-value="${escapeAttr(value)}">No considerar</button>
+          <button type="button" data-contact-save data-type="${type}" data-value="${escapeAttr(value)}">Guardar</button>
+          <button type="button" data-contact-delete data-type="${type}" data-value="${escapeAttr(value)}" class="danger-soft">Borrar marca</button>
         </div>
       </article>
     `;
   }).join("");
 }
 
-function buildContactMessage(debtor, type, value) {
+function contactStatusLabel(status) {
+  if (status === "ok") return "Funciona";
+  if (status === "ignore") return "No considerar";
+  if (status === "manual") return "Comentario editado";
+  return "Sin marcar";
+}
+
+function contactCategoryOptions(selected = "") {
+  const categories = ["", "Titular", "Alumno", "Apoderado", "Tercero", "Equivocado", "No contesta", "Rebota", "Otro"];
+  return categories.map((category) => `<option value="${escapeAttr(category)}" ${category === selected ? "selected" : ""}>${category || "Sin categoria"}</option>`).join("");
+}
+
+function debtDetailText(debtor) {
+  return [
+    "Concepto | Monto",
+    `Capital | ${fmtMoney.format(debtor.saldoCapital)}`,
+    `Intereses por mora | ${fmtMoney.format(debtor.interes)}`,
+    `Gastos de cobranza | ${fmtMoney.format(debtor.gastoCobranza)}`,
+    `Total a pagar | ${fmtMoney.format(debtor.deudaTotal)}`,
+  ].join("\n");
+}
+
+function buildEmailBody(debtor, value) {
   const offerAmount = getOfferAmount(debtor);
-  const offerText = offerAmount ? `Existe un convenio vigente por ${fmtMoney.format(offerAmount)}.` : "Aún no registra un convenio aprobado.";
-  const base = `Estimado/a ${debtor.nombreTitular || ""}, le contactamos por deuda AIEP asociada al alumno ${debtor.nombreAlumno || ""}, RUT ${debtor.rutAlumno || ""}. Saldo total pendiente: ${fmtMoney.format(debtor.deudaTotal)}. ${offerText} Datos de transferencia: Banco BCI, Comercial Remesa SpA, RUT 76.976.117-9, Cuenta Corriente 27826341. Si ya pagó, envíe el comprobante para validación.`;
-  return type === "correo"
-    ? `Asunto: Regularización deuda AIEP\n\n${base}\n\nContacto utilizado: ${value}`
-    : base;
+  const offerText = offerAmount ? `Convenio vigente: ${fmtMoney.format(offerAmount)}.` : "No registra convenio vigente.";
+  return [
+    `Estimado/a ${debtor.nombreTitular || ""},`,
+    "",
+    `Le contactamos por deuda AIEP asociada al alumno ${debtor.nombreAlumno || ""}, RUT ${debtor.rutAlumno || ""}.`,
+    "",
+    "Detalle de deuda:",
+    debtDetailText(debtor),
+    "",
+    offerText,
+    "",
+    "Datos de transferencia:",
+    TRANSFER_DETAILS.join("\n"),
+    "",
+    `Portal de consulta: ${PORTAL_URL}`,
+    "Ingrese con su RUT para revisar el estado de deuda y adjuntar comprobantes.",
+    "",
+    `Contacto utilizado: ${value}`,
+  ].join("\n");
+}
+
+function buildWhatsappMessage(debtor) {
+  return `Estimado/a ${debtor.nombreTitular || ""}, registra deuda AIEP con saldo total pendiente de ${fmtMoney.format(debtor.deudaTotal)}.`;
+}
+
+function buildContactMessage(debtor, type, value) {
+  return type === "correo" ? buildEmailBody(debtor, value) : buildWhatsappMessage(debtor);
 }
 
 function phoneForWhatsApp(value) {
@@ -727,24 +860,130 @@ function copyContactMessage(event) {
   const type = event.currentTarget.dataset.type;
   const value = event.currentTarget.dataset.value;
   if (type === "telefono") {
-    window.open(`https://wa.me/${phoneForWhatsApp(value)}?text=${encodeURIComponent(message)}`, "_blank");
-    $("copyStatus").textContent = "WhatsApp abierto con mensaje preparado.";
+    openWhatsAppWeb(value, message);
+    $("copyStatus").textContent = "WhatsApp Web abierto con mensaje preparado.";
     return;
   }
-  window.location.href = `mailto:${encodeURIComponent(value)}?subject=${encodeURIComponent("Regularización deuda AIEP")}&body=${encodeURIComponent(message)}`;
+  openMailClient(value, message);
   $("copyStatus").textContent = "Correo abierto con mensaje preparado.";
+}
+
+function openMailClient(email, body) {
+  window.location.href = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent("Regularizacion deuda AIEP")}&body=${encodeURIComponent(body)}`;
+}
+
+function openWhatsAppWeb(phone, message) {
+  const url = `https://web.whatsapp.com/send?phone=${phoneForWhatsApp(phone)}&text=${encodeURIComponent(message)}`;
+  if (whatsappWindow && !whatsappWindow.closed) {
+    try {
+      whatsappWindow.location.href = url;
+      whatsappWindow.focus();
+    } catch {
+      whatsappWindow = window.open(url, "abg_whatsapp_web");
+    }
+    return;
+  }
+  whatsappWindow = window.open(url, "abg_whatsapp_web");
 }
 
 function updateContactStatus(event) {
   const btn = event.currentTarget;
-  const comment = prompt("Comentario para esta marca:", "") || "";
+  const wrapper = btn.closest(".contact-item");
+  const comment = wrapper.querySelector("[data-contact-comment]")?.value.trim() || "";
+  const category = wrapper.querySelector("[data-contact-category]")?.value || "";
   store.contacts[contactKey(selectedDebtor, btn.dataset.type, btn.dataset.value)] = {
     status: btn.dataset.contactAction,
+    category,
     comment,
     date: new Date().toISOString(),
   };
   writeJson("abg_contacts", store.contacts);
   renderExecutiveDetail();
+}
+
+function saveContactMeta(event) {
+  const btn = event.currentTarget;
+  const wrapper = btn.closest(".contact-item");
+  const comment = wrapper.querySelector("[data-contact-comment]")?.value.trim() || "";
+  const category = wrapper.querySelector("[data-contact-category]")?.value || "";
+  const key = contactKey(selectedDebtor, btn.dataset.type, btn.dataset.value);
+  const current = store.contacts[key] || {};
+  store.contacts[key] = {
+    ...current,
+    status: current.status || "manual",
+    category,
+    comment,
+    date: new Date().toISOString(),
+  };
+  writeJson("abg_contacts", store.contacts);
+  renderExecutiveDetail();
+}
+
+function deleteContactMeta(event) {
+  const btn = event.currentTarget;
+  delete store.contacts[contactKey(selectedDebtor, btn.dataset.type, btn.dataset.value)];
+  writeJson("abg_contacts", store.contacts);
+  renderExecutiveDetail();
+}
+
+function firstUsableContact(debtor, type) {
+  const values = type === "correo" ? debtor.correos : debtor.telefonos;
+  return values.find((value) => store.contacts[contactKey(debtor, type, value)]?.status !== "ignore") || values[0] || "";
+}
+
+function campaignDebtors(type) {
+  const min = parseMoney($("campaignDebtMin").value);
+  const max = parseMoney($("campaignDebtMax").value);
+  const limit = Math.max(1, Number($("campaignLimit").value || 1));
+  const source = data.debtors.filter(executiveFilter).sort((a, b) => b.deudaTotal - a.deudaTotal);
+  return source
+    .filter((debtor) => debtor.deudaTotal >= min)
+    .filter((debtor) => !max || debtor.deudaTotal <= max)
+    .filter((debtor) => firstUsableContact(debtor, type))
+    .slice(0, limit);
+}
+
+function startCampaign(type) {
+  stopCampaign(false);
+  campaignChannel = type;
+  campaignQueue = campaignDebtors(type).map((debtor) => ({
+    debtor,
+    value: firstUsableContact(debtor, type),
+  }));
+  campaignTotal = campaignQueue.length;
+  if (!campaignQueue.length) {
+    setText("campaignStatus", "Sin contactos para el filtro seleccionado");
+    return;
+  }
+  setText("campaignStatus", `${campaignQueue.length} mensajes en cola`);
+  deliverCampaignItem();
+}
+
+function deliverCampaignItem() {
+  if (!campaignQueue.length) {
+    setText("campaignStatus", "Campana finalizada");
+    campaignChannel = "";
+    return;
+  }
+  const item = campaignQueue.shift();
+  if (campaignChannel === "correo") {
+    openMailClient(item.value, buildEmailBody(item.debtor, item.value));
+  } else {
+    openWhatsAppWeb(item.value, buildWhatsappMessage(item.debtor));
+  }
+  const sent = campaignTotal - campaignQueue.length;
+  setText("campaignStatus", `${sent} enviados/preparados. Quedan ${campaignQueue.length}`);
+  const intervalMs = Math.max(5, Number($("campaignInterval").value || 20)) * 1000;
+  if (campaignQueue.length) campaignTimer = window.setTimeout(deliverCampaignItem, intervalMs);
+}
+
+function stopCampaign(updateStatus = true) {
+  if (campaignTimer) window.clearTimeout(campaignTimer);
+  campaignTimer = null;
+  campaignQueue = [];
+  campaignChannel = "";
+  campaignTotal = 0;
+  if (updateStatus) setText("campaignStatus", "Campana detenida");
 }
 
 function saveOffer(event) {
@@ -864,6 +1103,7 @@ async function saveManagementEntry(event) {
   if (file && file.size) {
     await saveFileRecord(file, { debtorId: selectedDebtor.id, debtorName: selectedDebtor.nombreTitular, source: "ejecutivo", category: "comprobante", entryId: entry.id });
   }
+  renderExecutiveRows();
   renderExecutiveDetail();
 }
 
@@ -1137,12 +1377,23 @@ function bindEvents() {
   $("globalSearch").addEventListener("input", renderExecutiveRows);
   $("execStateFilter").addEventListener("input", renderExecutiveRows);
   $("execContactFilter").addEventListener("input", renderExecutiveRows);
+  $("execRecentFilter").addEventListener("input", renderExecutiveRows);
+  $("execNoManagementDays").addEventListener("input", renderExecutiveRows);
   $("clearExecFilters").addEventListener("click", () => {
     $("execStateFilter").value = "";
     $("execContactFilter").value = "";
+    $("execRecentFilter").value = "";
+    $("execNoManagementDays").value = "";
     $("globalSearch").value = "";
     renderExecutiveRows();
   });
+  $("startEmailCampaign").addEventListener("click", () => startCampaign("correo"));
+  $("startWhatsappCampaign").addEventListener("click", () => startCampaign("telefono"));
+  $("stopCampaign").addEventListener("click", () => stopCampaign(true));
+  ["campaignDebtMin", "campaignDebtMax"].forEach((id) => $(id).addEventListener("blur", (event) => {
+    const amount = parseMoney(event.currentTarget.value);
+    event.currentTarget.value = amount ? fmtMoney.format(amount) : "";
+  }));
   $("debtorUploadForm").addEventListener("submit", saveDebtorReceipt);
   $("bankUploadForm").addEventListener("submit", saveBankStatement);
   $("closeAgreementModal").addEventListener("click", closeAgreementModal);
