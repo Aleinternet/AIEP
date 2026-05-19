@@ -24,7 +24,6 @@ const data = window.ABG_DATA || {
 const fmtMoney = new Intl.NumberFormat("es-CL", { style: "currency", currency: "CLP", maximumFractionDigits: 0 });
 const fmtNum = new Intl.NumberFormat("es-CL");
 const today = () => new Date().toISOString().slice(0, 10);
-const PORTAL_URL = "https://project-6x64h.vercel.app/web/";
 const TRANSFER_DETAILS = [
   "Banco BCI",
   "Comercial Remesa SpA",
@@ -808,12 +807,22 @@ function contactCategoryOptions(selected = "") {
 }
 
 function debtDetailText(debtor) {
+  const rows = [
+    ["Saldo capital", fmtMoney.format(debtor.saldoCapital)],
+    ["Intereses por mora", fmtMoney.format(debtor.interes)],
+    ["Gastos de cobranza", fmtMoney.format(debtor.gastoCobranza)],
+    ["Total a pagar", fmtMoney.format(debtor.deudaTotal)],
+  ];
+  const conceptWidth = Math.max("Concepto".length, ...rows.map(([label]) => label.length)) + 2;
+  const amountWidth = Math.max("Monto".length, ...rows.map(([, amount]) => amount.length)) + 2;
+  const line = `+${"-".repeat(conceptWidth)}+${"-".repeat(amountWidth)}+`;
+  const formatRow = (left, right) => `| ${left.padEnd(conceptWidth - 2)} | ${right.padStart(amountWidth - 2)} |`;
   return [
-    "Concepto | Monto",
-    `Capital | ${fmtMoney.format(debtor.saldoCapital)}`,
-    `Intereses por mora | ${fmtMoney.format(debtor.interes)}`,
-    `Gastos de cobranza | ${fmtMoney.format(debtor.gastoCobranza)}`,
-    `Total a pagar | ${fmtMoney.format(debtor.deudaTotal)}`,
+    line,
+    formatRow("Concepto", "Monto"),
+    line,
+    ...rows.map(([label, amount]) => formatRow(label, amount)),
+    line,
   ].join("\n");
 }
 
@@ -832,9 +841,6 @@ function buildEmailBody(debtor, value) {
     "",
     "Datos de transferencia:",
     TRANSFER_DETAILS.join("\n"),
-    "",
-    `Portal de consulta: ${PORTAL_URL}`,
-    "Ingrese con su RUT para revisar el estado de deuda y adjuntar comprobantes.",
     "",
     `Contacto utilizado: ${value}`,
   ].join("\n");
@@ -876,12 +882,8 @@ function openWhatsAppWeb(phone, message) {
   const url = `https://web.whatsapp.com/send?phone=${phoneForWhatsApp(phone)}&text=${encodeURIComponent(message)}`;
   if (whatsappWindow && !whatsappWindow.closed) {
     try {
-      whatsappWindow.location.href = url;
-      whatsappWindow.focus();
-    } catch {
-      whatsappWindow = window.open(url, "abg_whatsapp_web");
-    }
-    return;
+      whatsappWindow.close();
+    } catch {}
   }
   whatsappWindow = window.open(url, "abg_whatsapp_web");
 }
