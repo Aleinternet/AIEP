@@ -108,7 +108,7 @@ textarea { resize: vertical; }
 
 .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: var(--radius); background: #fff; }
 table { border-collapse: collapse; width: 100%; min-width: 680px; }
-.workbench table { min-width: 1120px; }
+.workbench > .panel:not(.side-panel) > .table-wrap > table { min-width: 1120px; }
 th, td { padding: 12px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
 th { font-size: 12px; text-transform: uppercase; color: var(--muted); background: #f8fafc; position: sticky; top: 0; }
 td { font-size: 14px; }
@@ -147,8 +147,10 @@ td small { display: block; color: var(--muted); margin-top: 4px; }
 .name-block { display: grid; grid-template-columns: auto 1fr 1fr; gap: 10px; align-items: center; border: 1px solid var(--line); border-radius: 6px; padding: 12px; margin-bottom: 12px; }
 .name-block strong, .name-block span { display: block; overflow-wrap: anywhere; }
 .name-block small { color: var(--muted); }
-.excel-card { border: 1px solid var(--line); border-radius: 6px; overflow: auto; background: #fff; margin-bottom: 12px; }
-.mini-table { min-width: 0; width: 100%; }
+.excel-card { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: #fff; margin-bottom: 12px; }
+.mini-table { min-width: 0 !important; width: 100%; table-layout: fixed; }
+.mini-table th:first-child, .mini-table td:first-child { width: 58%; }
+.mini-table th:last-child, .mini-table td:last-child { width: 42%; }
 .mini-table th, .mini-table td { padding: 9px 10px; }
 .mini-table td:last-child { text-align: right; font-weight: 800; }
 .interest-row td, .expense-row td { background: #fffdf5; color: #713f12; }
