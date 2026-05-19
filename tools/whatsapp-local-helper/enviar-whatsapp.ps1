@@ -5,6 +5,58 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+
+public static class Win32Input {
+  [StructLayout(LayoutKind.Sequential)]
+  public struct RECT {
+    public int Left;
+    public int Top;
+    public int Right;
+    public int Bottom;
+  }
+
+  [DllImport("user32.dll")]
+  public static extern IntPtr GetForegroundWindow();
+
+  [DllImport("user32.dll")]
+  public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+
+  [DllImport("user32.dll")]
+  public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+  [DllImport("user32.dll")]
+  public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+
+  [DllImport("user32.dll")]
+  public static extern bool SetCursorPos(int x, int y);
+
+  [DllImport("user32.dll")]
+  public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
+
+  public const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
+  public const uint MOUSEEVENTF_LEFTUP = 0x0004;
+  public const int SW_RESTORE = 9;
+}
+"@
+
+$logPath = Join-Path $env:TEMP "abg-whatsapp-helper.log"
+
+function Write-HelperLog {
+  param([string]$Message)
+  try {
+    $stamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    Add-Content -LiteralPath $logPath -Value "[$stamp] $Message"
+  } catch {
+    # El log es solo diagnostico; no debe detener el envio.
+  }
+}
+
 function Get-PayloadJson {
   param([string]$ProtocolUrl)
 
@@ -25,14 +77,46 @@ function Get-PayloadJson {
   [Text.Encoding]::UTF8.GetString($bytes)
 }
 
+function Get-WhatsAppWindowProcess {
+  $processes = @(Get-Process |
+    Where-Object {
+      $_.MainWindowHandle -ne 0 -and (
+        $_.ProcessName -like "*WhatsApp*" -or
+        $_.MainWindowTitle -like "*WhatsApp*"
+      )
+    } |
+    Sort-Object @{ Expression = { if ($_.ProcessName -like "*WhatsApp*") { 0 } else { 1 } } }, StartTime -Descending)
+
+  if ($processes.Count -gt 0) {
+    return $processes[0]
+  }
+
+  return $null
+}
+
 function Activate-WhatsApp {
   param([int]$Seconds = 8)
 
   $shell = New-Object -ComObject WScript.Shell
   $deadline = (Get-Date).AddSeconds($Seconds)
   while ((Get-Date) -lt $deadline) {
+    $proc = Get-WhatsAppWindowProcess
+    if ($null -ne $proc) {
+      [Win32Input]::ShowWindowAsync($proc.MainWindowHandle, [Win32Input]::SW_RESTORE) | Out-Null
+      [Win32Input]::SetForegroundWindow($proc.MainWindowHandle) | Out-Null
+      Start-Sleep -Milliseconds 300
+      Write-HelperLog "Ventana WhatsApp activada: process=$($proc.ProcessName), pid=$($proc.Id), title=$($proc.MainWindowTitle)"
+      return @{
+        Shell = $shell
+        Process = $proc
+      }
+    }
     if ($shell.AppActivate("WhatsApp")) {
-      return $shell
+      Write-HelperLog "Ventana WhatsApp activada por titulo."
+      return @{
+        Shell = $shell
+        Process = $null
+      }
     }
     Start-Sleep -Milliseconds 500
   }
@@ -40,22 +124,129 @@ function Activate-WhatsApp {
 }
 
 function Close-CurrentChat {
-  param([object]$Shell)
+  param([object]$WhatsApp)
 
-  if ($null -eq $Shell) { return }
-  $Shell.SendKeys("{ESC}")
+  if ($null -eq $WhatsApp) { return }
+  $shell = $WhatsApp.Shell
+  $shell.SendKeys("{ESC}")
   Start-Sleep -Milliseconds 500
-  $Shell.SendKeys("{ESC}")
+  $shell.SendKeys("{ESC}")
   Start-Sleep -Milliseconds 500
 }
 
-function Press-Send {
-  param([object]$Shell)
+function Get-WhatsAppAutomationWindow {
+  $proc = Get-WhatsAppWindowProcess
+  if ($null -eq $proc) { return $null }
 
-  $Shell.SendKeys("{ENTER}")
-  Start-Sleep -Milliseconds 800
-  $Shell.SendKeys("~")
-  Start-Sleep -Milliseconds 800
+  try {
+    return [System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)
+  } catch {
+    Write-HelperLog "No se pudo leer UI Automation: $($_.Exception.Message)"
+    return $null
+  }
+}
+
+function Invoke-SendButtonByAutomation {
+  $window = Get-WhatsAppAutomationWindow
+  if ($null -eq $window) { return $false }
+
+  $buttonCondition = New-Object -TypeName System.Windows.Automation.PropertyCondition -ArgumentList @(
+    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+    [System.Windows.Automation.ControlType]::Button
+  )
+  $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
+
+  foreach ($button in $buttons) {
+    $name = [string]$button.Current.Name
+    if ($name -match "(?i)\b(enviar|send)\b") {
+      try {
+        Write-HelperLog "Boton enviar encontrado por UIA: '$name'"
+        $invoke = $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+        $invoke.Invoke()
+        Start-Sleep -Milliseconds 1200
+        return $true
+      } catch {
+        try {
+          $rect = $button.Current.BoundingRectangle
+          if ($rect.Width -gt 0 -and $rect.Height -gt 0) {
+            $x = [int]($rect.Left + ($rect.Width / 2))
+            $y = [int]($rect.Top + ($rect.Height / 2))
+            Write-HelperLog "Click en boton enviar por bounding box: '$name' x=$x y=$y"
+            Click-At -X $x -Y $y
+            Start-Sleep -Milliseconds 1200
+            return $true
+          }
+        } catch {
+          Write-HelperLog "Fallo click UIA: $($_.Exception.Message)"
+        }
+      }
+    }
+  }
+
+  Write-HelperLog "No se encontro boton Enviar por UI Automation."
+  return $false
+}
+
+function Click-At {
+  param(
+    [int]$X,
+    [int]$Y
+  )
+
+  [Win32Input]::SetCursorPos($X, $Y) | Out-Null
+  Start-Sleep -Milliseconds 120
+  [Win32Input]::mouse_event([Win32Input]::MOUSEEVENTF_LEFTDOWN, 0, 0, 0, [UIntPtr]::Zero)
+  Start-Sleep -Milliseconds 80
+  [Win32Input]::mouse_event([Win32Input]::MOUSEEVENTF_LEFTUP, 0, 0, 0, [UIntPtr]::Zero)
+}
+
+function Invoke-SendButtonByCoordinates {
+  $proc = Get-WhatsAppWindowProcess
+  if ($null -eq $proc) { return $false }
+
+  $rect = New-Object Win32Input+RECT
+  if (-not [Win32Input]::GetWindowRect($proc.MainWindowHandle, [ref]$rect)) {
+    return $false
+  }
+
+  $points = @(
+    @($rect.Right - 44, $rect.Bottom - 44),
+    @($rect.Right - 64, $rect.Bottom - 44),
+    @($rect.Right - 84, $rect.Bottom - 44),
+    @($rect.Right - 44, $rect.Bottom - 58),
+    @($rect.Right - 72, $rect.Bottom - 58)
+  )
+
+  foreach ($point in $points) {
+    $x = [int]$point[0]
+    $y = [int]$point[1]
+    Write-HelperLog "Click coordenado candidato enviar: x=$x y=$y"
+    Click-At -X $x -Y $y
+    Start-Sleep -Milliseconds 800
+  }
+
+  return $true
+}
+
+function Press-Send {
+  param([object]$WhatsApp)
+
+  if ($null -eq $WhatsApp) { return $false }
+  $shell = $WhatsApp.Shell
+
+  if (Invoke-SendButtonByAutomation) { return $true }
+
+  Write-HelperLog "Fallback teclado Enter."
+  $shell.SendKeys("~")
+  Start-Sleep -Milliseconds 700
+  $shell.SendKeys("^{ENTER}")
+  Start-Sleep -Milliseconds 700
+  $shell.SendKeys("^~")
+  Start-Sleep -Milliseconds 700
+
+  if (Invoke-SendButtonByCoordinates) { return $true }
+
+  return $false
 }
 
 $json = Get-PayloadJson -ProtocolUrl $Url
@@ -68,21 +259,21 @@ $phone = [string]$payload.phone
 $message = [Uri]::EscapeDataString([string]$payload.message)
 $whatsAppUrl = "whatsapp://send?phone=$phone&text=$message"
 
-$shell = Activate-WhatsApp -Seconds 2
-Close-CurrentChat -Shell $shell
+$currentWhatsApp = Activate-WhatsApp -Seconds 2
+Close-CurrentChat -WhatsApp $currentWhatsApp
 
+Write-HelperLog "Abriendo WhatsApp para phone=$phone"
 (New-Object -ComObject Shell.Application).ShellExecute($whatsAppUrl, $null, $null, "open", 1) | Out-Null
-Start-Sleep -Seconds 10
+Start-Sleep -Seconds 14
 
-$shell = Activate-WhatsApp -Seconds 8
-if ($null -eq $shell) {
+$whatsApp = Activate-WhatsApp -Seconds 10
+if ($null -eq $whatsApp) {
   throw "No se pudo activar WhatsApp Desktop."
 }
 
-$shell.SendKeys("{TAB}")
-Start-Sleep -Milliseconds 300
-$shell.SendKeys("+{TAB}")
-Start-Sleep -Milliseconds 300
-Press-Send -Shell $shell
-Start-Sleep -Seconds 2
-Close-CurrentChat -Shell $shell
+if (-not (Press-Send -WhatsApp $whatsApp)) {
+  throw "No se pudo presionar Enviar en WhatsApp Desktop."
+}
+Start-Sleep -Seconds 3
+Close-CurrentChat -WhatsApp $whatsApp
+Write-HelperLog "Flujo WhatsApp finalizado para phone=$phone"
