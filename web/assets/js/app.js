@@ -881,11 +881,36 @@ function buildEmailHtmlBody(debtor, value) {
 }
 
 function buildWhatsappMessage(debtor) {
+  const studentName = formatStudentName(debtor.nombreAlumno);
+  const studentRut = debtor.rutAlumno || "Sin RUT informado";
   return [
     `Estimado/a ${debtor.nombreTitular || ""},`,
+    `Estudiante: ${studentName}, RUT ${studentRut}.`,
     `registra deuda AIEP con saldo total pendiente de *${fmtMoney.format(debtor.deudaTotal)}*.`,
     "Su deuda esta acumulando intereses y gastos de cobranza. Por favor responder para cerrar su caso.",
   ].join("\n");
+}
+
+function formatStudentName(name) {
+  const clean = String(name || "Sin estudiante informado").replace(/\s+/g, " ").trim();
+  const parts = clean.split(" ").filter(Boolean);
+  if (parts.length < 4) return clean;
+  const firstNames = new Set([
+    "AARON", "ADRIANA", "ALEJANDRA", "ALEJANDRO", "ALFREDO", "ALICIA", "ANDREA", "ANDRES", "ANGEL", "ANTONIA", "ANTONIO",
+    "ARIEL", "BARBARA", "BASTIAN", "BENJAMIN", "CAMILA", "CARLA", "CARLOS", "CAROL", "CAROLA", "CAROLINA", "CATALINA",
+    "CECILIA", "CLAUDIA", "CRISTIAN", "CRISTINA", "DANIEL", "DANIELA", "DIEGO", "EDUARDO", "ELIZABETH", "ESTEBAN",
+    "FABIOLA", "FELIPE", "FERNANDA", "FERNANDO", "FRANCISCA", "FRANCISCO", "GABRIEL", "GABRIELA", "GLORIA", "IGNACIO",
+    "ISABEL", "JAVIER", "JAVIERA", "JOAQUIN", "JORGE", "JOSE", "JUAN", "KARLA", "KAROL", "LORETO", "LUIS", "MARCELO",
+    "MARCELA", "MARCO", "MARIA", "MARIO", "MARTIN", "MATIAS", "MAURICIO", "MIGUEL", "NATALIA", "NICOLAS", "PABLO",
+    "PATRICIO", "PAULA", "PEDRO", "RAFAEL", "RICARDO", "ROBERTO", "RODRIGO", "ROMINA", "ROSA", "SEBASTIAN", "SOFIA",
+    "VALENTINA", "VICTOR", "VICTORIA",
+  ]);
+  const firstLooksLikeName = firstNames.has(parts[0].toUpperCase());
+  const laterLooksLikeName = firstNames.has(parts[2].toUpperCase()) || firstNames.has(parts[3].toUpperCase());
+  if (!firstLooksLikeName && laterLooksLikeName) {
+    return [...parts.slice(2), ...parts.slice(0, 2)].join(" ");
+  }
+  return clean;
 }
 
 function buildContactMessage(debtor, type, value) {
@@ -956,12 +981,15 @@ function openWhatsAppWeb(phone, message) {
   const url = `https://web.whatsapp.com/send?phone=${phoneForWhatsApp(phone)}&text=${encodeURIComponent(message)}`;
   if (whatsappWindow && !whatsappWindow.closed) {
     try {
-      whatsappWindow.location.href = url;
-      whatsappWindow.focus();
-      return;
+      whatsappWindow.close();
+      if (!whatsappWindow.closed) {
+        whatsappWindow.location.href = url;
+        whatsappWindow.focus();
+        return;
+      }
     } catch {}
   }
-  whatsappWindow = window.open(url, "abg_whatsapp_web");
+  whatsappWindow = window.open(url, `abg_whatsapp_${Date.now()}`);
 }
 
 function updateContactStatus(event) {
