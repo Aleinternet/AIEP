@@ -97,6 +97,8 @@ textarea { resize: vertical; }
 .campaign-head span { color: var(--muted); font-size: 13px; }
 .campaign-grid { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)) auto; gap: 10px; align-items: end; }
 .campaign-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.helper-toggle { display: flex; align-items: center; gap: 8px; align-self: center; color: var(--ink); }
+.helper-toggle input { width: auto; }
 .mail-action { border-color: #bfdbfe; background: #eff6ff; color: #1d4ed8; }
 .mail-action:hover { border-color: #60a5fa; background: #dbeafe; color: #1e40af; }
 .whatsapp-action { border-color: #bbf7d0; background: #f0fdf4; color: #15803d; }

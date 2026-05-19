@@ -846,6 +846,39 @@ function buildEmailBody(debtor, value) {
   ].join("\n");
 }
 
+function buildEmailHtmlBody(debtor, value) {
+  const offerAmount = getOfferAmount(debtor);
+  const offerText = offerAmount ? `Convenio vigente: ${fmtMoney.format(offerAmount)}.` : "No registra convenio vigente.";
+  const rows = [
+    ["Saldo capital", fmtMoney.format(debtor.saldoCapital)],
+    ["Intereses por mora", fmtMoney.format(debtor.interes)],
+    ["Gastos de cobranza", fmtMoney.format(debtor.gastoCobranza)],
+    ["Total a pagar", fmtMoney.format(debtor.deudaTotal)],
+  ];
+  return `
+    <div style="font-family:Arial, sans-serif; font-size:11pt; color:#222;">
+      <p>Estimado(a) ${escapeHtml(debtor.nombreTitular || "")},</p>
+      <p>Le contactamos por deuda AIEP asociada al alumno ${escapeHtml(debtor.nombreAlumno || "")}, RUT ${escapeHtml(debtor.rutAlumno || "")}.</p>
+      <p><b>Detalle de deuda:</b></p>
+      <table border="1" cellspacing="0" cellpadding="5" style="border-collapse:collapse; width:100%; font-family:Arial, sans-serif; font-size:10pt;">
+        <tr style="background-color:#BFBFBF; font-weight:bold; text-align:center;">
+          <th>Concepto</th>
+          <th>Monto</th>
+        </tr>
+        ${rows.map(([label, amount], index) => `
+          <tr style="${index === rows.length - 1 ? "font-weight:bold; background-color:#E7E6E6;" : ""}">
+            <td>${escapeHtml(label)}</td>
+            <td style="text-align:right;">${escapeHtml(amount)}</td>
+          </tr>
+        `).join("")}
+      </table>
+      <p>${escapeHtml(offerText)}</p>
+      <p><b>Datos de transferencia:</b><br>${TRANSFER_DETAILS.map(escapeHtml).join("<br>")}</p>
+      <p><small>Contacto utilizado: ${escapeHtml(value)}</small></p>
+    </div>
+  `;
+}
+
 function buildWhatsappMessage(debtor) {
   return `Estimado/a ${debtor.nombreTitular || ""}, registra deuda AIEP con saldo total pendiente de ${fmtMoney.format(debtor.deudaTotal)}.`;
 }
@@ -870,11 +903,31 @@ function copyContactMessage(event) {
     $("copyStatus").textContent = "WhatsApp Web abierto con mensaje preparado.";
     return;
   }
-  openMailClient(value, message);
+  openMailClient(value, message, buildEmailHtmlBody(selectedDebtor, value));
   $("copyStatus").textContent = "Correo abierto con mensaje preparado.";
 }
 
-function openMailClient(email, body) {
+function outlookClassicModeEnabled() {
+  return localStorage.getItem("abg_outlook_classic_mode") === "1";
+}
+
+function base64UrlEncode(value) {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function openMailClient(email, body, htmlBody = "") {
+  if (outlookClassicModeEnabled()) {
+    const payload = {
+      to: email,
+      subject: "Regularizacion deuda AIEP",
+      htmlBody: htmlBody || `<pre>${escapeHtml(body)}</pre>`,
+    };
+    window.location.href = `abg-outlook://compose?payload=${base64UrlEncode(JSON.stringify(payload))}`;
+    return;
+  }
   window.location.href = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent("Regularizacion deuda AIEP")}&body=${encodeURIComponent(body)}`;
 }
 
@@ -970,7 +1023,7 @@ function deliverCampaignItem() {
   const item = campaignQueue.shift();
   recordCampaignManagement(item.debtor, campaignChannel, item.value);
   if (campaignChannel === "correo") {
-    openMailClient(item.value, buildEmailBody(item.debtor, item.value));
+    openMailClient(item.value, buildEmailBody(item.debtor, item.value), buildEmailHtmlBody(item.debtor, item.value));
   } else {
     openWhatsAppWeb(item.value, buildWhatsappMessage(item.debtor));
   }
@@ -1411,6 +1464,10 @@ function bindEvents() {
   $("startEmailCampaign").addEventListener("click", () => startCampaign("correo"));
   $("startWhatsappCampaign").addEventListener("click", () => startCampaign("telefono"));
   $("stopCampaign").addEventListener("click", () => stopCampaign(true));
+  $("outlookClassicMode").checked = outlookClassicModeEnabled();
+  $("outlookClassicMode").addEventListener("change", (event) => {
+    localStorage.setItem("abg_outlook_classic_mode", event.currentTarget.checked ? "1" : "0");
+  });
   ["campaignDebtMin", "campaignDebtMax"].forEach((id) => $(id).addEventListener("blur", (event) => {
     const amount = parseMoney(event.currentTarget.value);
     event.currentTarget.value = amount ? fmtMoney.format(amount) : "";
