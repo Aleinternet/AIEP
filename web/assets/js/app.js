@@ -919,9 +919,16 @@ function buildContactMessage(debtor, type, value) {
 
 function phoneForWhatsApp(value) {
   const digits = String(value || "").replace(/\D/g, "");
-  if (digits.startsWith("56")) return digits;
-  if (digits.length === 9) return `56${digits}`;
+  if (digits.startsWith("569") && digits.length === 11) return digits;
+  if (digits.startsWith("56") && digits.length >= 11 && digits.length <= 12) return digits;
+  if (digits.length === 9 && digits.startsWith("9")) return `56${digits}`;
+  if (digits.length === 8) return `569${digits}`;
   return digits;
+}
+
+function isValidWhatsAppPhone(value) {
+  const phone = phoneForWhatsApp(value);
+  return /^56\d{9,10}$/.test(phone);
 }
 
 function copyContactMessage(event) {
@@ -966,9 +973,14 @@ function openMailClient(email, body, htmlBody = "") {
 }
 
 function openWhatsAppClient(phone, message) {
+  const normalizedPhone = phoneForWhatsApp(phone);
+  if (!isValidWhatsAppPhone(phone)) {
+    if ($("copyStatus")) $("copyStatus").textContent = "Telefono no valido para WhatsApp.";
+    return;
+  }
   if (whatsappLocalModeEnabled()) {
     const payload = {
-      phone: phoneForWhatsApp(phone),
+      phone: normalizedPhone,
       message,
     };
     window.location.href = `abg-whatsapp://send?payload=${base64UrlEncode(JSON.stringify(payload))}`;
@@ -978,7 +990,9 @@ function openWhatsAppClient(phone, message) {
 }
 
 function openWhatsAppWeb(phone, message) {
-  const url = `https://web.whatsapp.com/send?phone=${phoneForWhatsApp(phone)}&text=${encodeURIComponent(message)}`;
+  const normalizedPhone = phoneForWhatsApp(phone);
+  if (!isValidWhatsAppPhone(phone)) return;
+  const url = `https://web.whatsapp.com/send?phone=${normalizedPhone}&text=${encodeURIComponent(message)}`;
   if (whatsappWindow && !whatsappWindow.closed) {
     try {
       whatsappWindow.close();
@@ -1037,6 +1051,7 @@ function usableContacts(debtor, type) {
   return [...new Set(values)]
     .map((value) => String(value || "").trim())
     .filter(Boolean)
+    .filter((value) => type === "correo" || isValidWhatsAppPhone(value))
     .filter((value) => store.contacts[contactKey(debtor, type, value)]?.status !== "ignore");
 }
 

@@ -39,6 +39,25 @@ function Activate-WhatsApp {
   return $null
 }
 
+function Close-CurrentChat {
+  param([object]$Shell)
+
+  if ($null -eq $Shell) { return }
+  $Shell.SendKeys("{ESC}")
+  Start-Sleep -Milliseconds 500
+  $Shell.SendKeys("{ESC}")
+  Start-Sleep -Milliseconds 500
+}
+
+function Press-Send {
+  param([object]$Shell)
+
+  $Shell.SendKeys("{ENTER}")
+  Start-Sleep -Milliseconds 800
+  $Shell.SendKeys("~")
+  Start-Sleep -Milliseconds 800
+}
+
 $json = Get-PayloadJson -ProtocolUrl $Url
 $payload = $json | ConvertFrom-Json
 
@@ -49,16 +68,21 @@ $phone = [string]$payload.phone
 $message = [Uri]::EscapeDataString([string]$payload.message)
 $whatsAppUrl = "whatsapp://send?phone=$phone&text=$message"
 
-(New-Object -ComObject Shell.Application).ShellExecute($whatsAppUrl, $null, $null, "open", 1) | Out-Null
-Start-Sleep -Seconds 8
+$shell = Activate-WhatsApp -Seconds 2
+Close-CurrentChat -Shell $shell
 
-$shell = Activate-WhatsApp -Seconds 5
+(New-Object -ComObject Shell.Application).ShellExecute($whatsAppUrl, $null, $null, "open", 1) | Out-Null
+Start-Sleep -Seconds 10
+
+$shell = Activate-WhatsApp -Seconds 8
 if ($null -eq $shell) {
   throw "No se pudo activar WhatsApp Desktop."
 }
 
-$shell.SendKeys("~")
+$shell.SendKeys("{TAB}")
+Start-Sleep -Milliseconds 300
+$shell.SendKeys("+{TAB}")
+Start-Sleep -Milliseconds 300
+Press-Send -Shell $shell
 Start-Sleep -Seconds 2
-$shell.SendKeys("{ESC}")
-Start-Sleep -Milliseconds 400
-$shell.SendKeys("{ESC}")
+Close-CurrentChat -Shell $shell
