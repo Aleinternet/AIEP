@@ -966,15 +966,34 @@ function deliverCampaignItem() {
     return;
   }
   const item = campaignQueue.shift();
+  recordCampaignManagement(item.debtor, campaignChannel, item.value);
   if (campaignChannel === "correo") {
     openMailClient(item.value, buildEmailBody(item.debtor, item.value));
   } else {
     openWhatsAppWeb(item.value, buildWhatsappMessage(item.debtor));
   }
   const sent = campaignTotal - campaignQueue.length;
-  setText("campaignStatus", `${sent} enviados/preparados. Quedan ${campaignQueue.length}`);
+  setText("campaignStatus", `${sent} enviados/preparados y registrados. Quedan ${campaignQueue.length}`);
   const intervalMs = Math.max(5, Number($("campaignInterval").value || 20)) * 1000;
   if (campaignQueue.length) campaignTimer = window.setTimeout(deliverCampaignItem, intervalMs);
+}
+
+function recordCampaignManagement(debtor, type, value) {
+  const channel = type === "correo" ? "Correo" : "WhatsApp";
+  const target = type === "correo" ? `correo ${value}` : `telefono ${value}`;
+  store.entries.unshift({
+    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    debtorId: debtor.id,
+    debtorName: debtor.nombreTitular,
+    date: today(),
+    channel,
+    result: "Envio automatico masivo",
+    comment: `Envio automatico masivo por ${channel} al ${target}.`,
+    user: session?.username || "callcenter",
+    createdAt: new Date().toISOString(),
+  });
+  writeJson("abg_entries", store.entries);
+  renderExecutiveRows();
 }
 
 function stopCampaign(updateStatus = true) {
