@@ -48,6 +48,7 @@ let campaignTimer = null;
 let campaignQueue = [];
 let campaignChannel = "";
 let campaignTotal = 0;
+let campaignSkippedToday = 0;
 let whatsappWindow = null;
 
 function applyRemoteData(remote) {
@@ -880,7 +881,11 @@ function buildEmailHtmlBody(debtor, value) {
 }
 
 function buildWhatsappMessage(debtor) {
-  return `Estimado/a ${debtor.nombreTitular || ""}, registra deuda AIEP con saldo total pendiente de ${fmtMoney.format(debtor.deudaTotal)}.`;
+  return [
+    `Estimado/a ${debtor.nombreTitular || ""},`,
+    `registra deuda AIEP con saldo total pendiente de *${fmtMoney.format(debtor.deudaTotal)}*.`,
+    "Su deuda esta acumulando intereses y gastos de cobranza. Por favor responder para cerrar su caso.",
+  ].join("\n");
 }
 
 function buildContactMessage(debtor, type, value) {
@@ -899,8 +904,8 @@ function copyContactMessage(event) {
   const type = event.currentTarget.dataset.type;
   const value = event.currentTarget.dataset.value;
   if (type === "telefono") {
-    openWhatsAppWeb(value, message);
-    $("copyStatus").textContent = "WhatsApp Web abierto con mensaje preparado.";
+    openWhatsAppClient(value, message);
+    $("copyStatus").textContent = whatsappLocalModeEnabled() ? "WhatsApp local activado para envio automatico." : "WhatsApp Web abierto con mensaje preparado.";
     return;
   }
   openMailClient(value, message, buildEmailHtmlBody(selectedDebtor, value));
@@ -909,6 +914,10 @@ function copyContactMessage(event) {
 
 function outlookClassicModeEnabled() {
   return localStorage.getItem("abg_outlook_classic_mode") === "1";
+}
+
+function whatsappLocalModeEnabled() {
+  return localStorage.getItem("abg_whatsapp_local_mode") === "1";
 }
 
 function base64UrlEncode(value) {
@@ -931,11 +940,25 @@ function openMailClient(email, body, htmlBody = "") {
   window.location.href = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent("Regularizacion deuda AIEP")}&body=${encodeURIComponent(body)}`;
 }
 
+function openWhatsAppClient(phone, message) {
+  if (whatsappLocalModeEnabled()) {
+    const payload = {
+      phone: phoneForWhatsApp(phone),
+      message,
+    };
+    window.location.href = `abg-whatsapp://send?payload=${base64UrlEncode(JSON.stringify(payload))}`;
+    return;
+  }
+  openWhatsAppWeb(phone, message);
+}
+
 function openWhatsAppWeb(phone, message) {
   const url = `https://web.whatsapp.com/send?phone=${phoneForWhatsApp(phone)}&text=${encodeURIComponent(message)}`;
   if (whatsappWindow && !whatsappWindow.closed) {
     try {
-      whatsappWindow.close();
+      whatsappWindow.location.href = url;
+      whatsappWindow.focus();
+      return;
     } catch {}
   }
   whatsappWindow = window.open(url, "abg_whatsapp_web");
@@ -981,54 +1004,73 @@ function deleteContactMeta(event) {
   renderExecutiveDetail();
 }
 
-function firstUsableContact(debtor, type) {
+function usableContacts(debtor, type) {
   const values = type === "correo" ? debtor.correos : debtor.telefonos;
-  return values.find((value) => store.contacts[contactKey(debtor, type, value)]?.status !== "ignore") || values[0] || "";
+  return [...new Set(values)]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .filter((value) => store.contacts[contactKey(debtor, type, value)]?.status !== "ignore");
 }
 
-function campaignDebtors(type) {
+function hasManagementToday(debtor) {
+  return entriesForDebtor(debtor).some((entry) => dateOnly(entry.date) === today());
+}
+
+function campaignTargets(type) {
   const min = parseMoney($("campaignDebtMin").value);
   const max = parseMoney($("campaignDebtMax").value);
   const limit = Math.max(1, Number($("campaignLimit").value || 1));
   const source = data.debtors.filter(executiveFilter).sort((a, b) => b.deudaTotal - a.deudaTotal);
-  return source
+  const validDebtors = source
     .filter((debtor) => debtor.deudaTotal >= min)
     .filter((debtor) => !max || debtor.deudaTotal <= max)
-    .filter((debtor) => firstUsableContact(debtor, type))
+    .filter((debtor) => usableContacts(debtor, type).length);
+  campaignSkippedToday = validDebtors.filter(hasManagementToday).length;
+  return validDebtors
+    .filter((debtor) => !hasManagementToday(debtor))
+    .flatMap((debtor) => usableContacts(debtor, type).map((value) => ({ debtor, value })))
     .slice(0, limit);
 }
 
 function startCampaign(type) {
   stopCampaign(false);
   campaignChannel = type;
-  campaignQueue = campaignDebtors(type).map((debtor) => ({
-    debtor,
-    value: firstUsableContact(debtor, type),
-  }));
+  campaignQueue = campaignTargets(type);
   campaignTotal = campaignQueue.length;
   if (!campaignQueue.length) {
-    setText("campaignStatus", "Sin contactos para el filtro seleccionado");
+    const skipped = campaignSkippedToday ? ` ${campaignSkippedToday} omitido(s) por gestion hoy.` : "";
+    setText("campaignStatus", `Sin contactos para el filtro seleccionado.${skipped}`);
     return;
   }
-  setText("campaignStatus", `${campaignQueue.length} mensajes en cola`);
+  setText("campaignStatus", `${campaignQueue.length} mensajes en cola. Siguiente: ${campaignTargetLabel(campaignQueue[0])}`);
   deliverCampaignItem();
+}
+
+function campaignTargetLabel(item) {
+  if (!item) return "sin siguiente contacto";
+  const kind = campaignChannel === "correo" ? "correo" : "telefono";
+  return `${item.debtor.nombreTitular || item.debtor.rutTitular || "Sin nombre"} - ${kind} ${item.value}`;
 }
 
 function deliverCampaignItem() {
   if (!campaignQueue.length) {
-    setText("campaignStatus", "Campana finalizada");
+    const skipped = campaignSkippedToday ? ` Omitidos por gestion hoy: ${campaignSkippedToday}.` : "";
+    setText("campaignStatus", `Campana finalizada.${skipped}`);
     campaignChannel = "";
     return;
   }
   const item = campaignQueue.shift();
+  setText("campaignStatus", `Enviando/preparando: ${campaignTargetLabel(item)}`);
   recordCampaignManagement(item.debtor, campaignChannel, item.value);
   if (campaignChannel === "correo") {
     openMailClient(item.value, buildEmailBody(item.debtor, item.value), buildEmailHtmlBody(item.debtor, item.value));
   } else {
-    openWhatsAppWeb(item.value, buildWhatsappMessage(item.debtor));
+    openWhatsAppClient(item.value, buildWhatsappMessage(item.debtor));
   }
   const sent = campaignTotal - campaignQueue.length;
-  setText("campaignStatus", `${sent} enviados/preparados y registrados. Quedan ${campaignQueue.length}`);
+  const next = campaignQueue.length ? ` Siguiente: ${campaignTargetLabel(campaignQueue[0])}.` : "";
+  const skipped = campaignSkippedToday ? ` Omitidos por gestion hoy: ${campaignSkippedToday}.` : "";
+  setText("campaignStatus", `${sent} enviados/preparados y registrados. Quedan ${campaignQueue.length}.${next}${skipped}`);
   const intervalMs = Math.max(5, Number($("campaignInterval").value || 20)) * 1000;
   if (campaignQueue.length) campaignTimer = window.setTimeout(deliverCampaignItem, intervalMs);
 }
@@ -1057,6 +1099,7 @@ function stopCampaign(updateStatus = true) {
   campaignQueue = [];
   campaignChannel = "";
   campaignTotal = 0;
+  campaignSkippedToday = 0;
   if (updateStatus) setText("campaignStatus", "Campana detenida");
 }
 
@@ -1467,6 +1510,10 @@ function bindEvents() {
   $("outlookClassicMode").checked = outlookClassicModeEnabled();
   $("outlookClassicMode").addEventListener("change", (event) => {
     localStorage.setItem("abg_outlook_classic_mode", event.currentTarget.checked ? "1" : "0");
+  });
+  $("whatsappLocalMode").checked = whatsappLocalModeEnabled();
+  $("whatsappLocalMode").addEventListener("change", (event) => {
+    localStorage.setItem("abg_whatsapp_local_mode", event.currentTarget.checked ? "1" : "0");
   });
   ["campaignDebtMin", "campaignDebtMax"].forEach((id) => $(id).addEventListener("blur", (event) => {
     const amount = parseMoney(event.currentTarget.value);
