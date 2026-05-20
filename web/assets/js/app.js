@@ -38,6 +38,7 @@ const store = {
   offers: readJson("abg_offers", {}),
   agreements: readJson("abg_agreements", readJson("abg_offers", {})),
   comments: readJson("abg_comments", {}),
+  campaignExcluded: readJson("abg_campaign_excluded", {}),
 };
 
 let session = null;
@@ -231,6 +232,27 @@ function contactRecord(debtor, type, value) {
 
 function isIgnoredContact(debtor, type, value) {
   return contactRecord(debtor, type, value).status === "ignore";
+}
+
+function isCampaignExcluded(debtor) {
+  return Boolean(store.campaignExcluded[debtor.id]);
+}
+
+function toggleCampaignExcluded(event) {
+  event.stopPropagation();
+  const id = event.currentTarget.dataset.debtorId;
+  if (!id) return;
+  if (store.campaignExcluded[id]) delete store.campaignExcluded[id];
+  else store.campaignExcluded[id] = true;
+  writeJson("abg_campaign_excluded", store.campaignExcluded);
+  renderExecutiveRows();
+}
+
+function clearCampaignExcluded() {
+  store.campaignExcluded = {};
+  writeJson("abg_campaign_excluded", store.campaignExcluded);
+  renderExecutiveRows();
+  setText("campaignStatus", "Exclusiones X limpiadas.");
 }
 
 function currentDebtorFiles() {
@@ -535,21 +557,32 @@ function executiveFilter(debtor) {
   return matchesQuery && (!state || displayState(debtor) === state) && matchesContact && matchesRecent && matchesAge;
 }
 
+function sortedExecutiveDebtors() {
+  return data.debtors.filter(executiveFilter).sort((a, b) => {
+    const paidA = effectiveState(a).includes("pagado") ? 1 : 0;
+    const paidB = effectiveState(b).includes("pagado") ? 1 : 0;
+    if (paidA !== paidB) return paidA - paidB;
+    return b.saldoCapital - a.saldoCapital;
+  });
+}
+
 function renderExecutiveRows() {
   const managementDates = visibleManagementDates();
   renderExecutiveHead(managementDates);
   if ($("executiveTable")) {
     $("executiveTable").style.minWidth = `${1120 + (managementDates.length * 170)}px`;
   }
-  executiveRows = data.debtors.filter(executiveFilter).sort((a, b) => {
-    const paidA = effectiveState(a).includes("pagado") ? 1 : 0;
-    const paidB = effectiveState(b).includes("pagado") ? 1 : 0;
-    if (paidA !== paidB) return paidA - paidB;
-    return b.saldoCapital - a.saldoCapital;
-  });
+  executiveRows = sortedExecutiveDebtors();
   $("executiveRows").innerHTML = executiveRows.slice(0, 350).map((d, index) => `
-    <tr data-index="${index}" class="${rowClass(d)} ${selectedDebtor?.id === d.id ? "selected-row" : ""}">
-      <td><span class="agreement-dot ${agreementDotClass(d)}"></span>${commentCount(d) ? `<span class="comment-badge row-comment-badge" title="Tiene comentarios internos"></span>` : ""}<strong>${d.nombreTitular || "Sin nombre"}</strong><br><span class="muted">${d.nombreAlumno || "Alumno no informado"}</span></td>
+    <tr data-index="${index}" class="${rowClass(d)} ${isCampaignExcluded(d) ? "campaign-excluded-row" : ""} ${selectedDebtor?.id === d.id ? "selected-row" : ""}">
+      <td>
+        <div class="name-cell">
+          <button type="button" class="exclude-toggle ${isCampaignExcluded(d) ? "active" : ""}" data-debtor-id="${escapeAttr(d.id)}" title="${isCampaignExcluded(d) ? "Incluir en masivos" : "Excluir de masivos"}">${isCampaignExcluded(d) ? "X" : ""}</button>
+          <div>
+            <span class="agreement-dot ${agreementDotClass(d)}"></span>${commentCount(d) ? `<span class="comment-badge row-comment-badge" title="Tiene comentarios internos"></span>` : ""}<strong>${d.nombreTitular || "Sin nombre"}</strong><br><span class="muted">${d.nombreAlumno || "Alumno no informado"}</span>
+          </div>
+        </div>
+      </td>
       <td>${d.rutTitular || d.rutDeudor}</td>
       <td>${statusPill(d)}</td>
       <td>${fmtMoney.format(d.saldoCapital)}</td>
@@ -567,6 +600,7 @@ function renderExecutiveRows() {
       renderExecutiveDetail();
     });
   });
+  document.querySelectorAll("[data-debtor-id].exclude-toggle").forEach((btn) => btn.addEventListener("click", toggleCampaignExcluded));
 }
 
 function rowClass(debtor) {
@@ -1144,8 +1178,9 @@ function campaignTargets(type) {
   const min = parseMoney($("campaignDebtMin").value);
   const max = parseMoney($("campaignDebtMax").value);
   const limit = Math.max(1, Number($("campaignLimit").value || 1));
-  const source = data.debtors.filter(executiveFilter).sort((a, b) => b.deudaTotal - a.deudaTotal);
+  const source = sortedExecutiveDebtors();
   const validDebtors = source
+    .filter((debtor) => !isCampaignExcluded(debtor))
     .filter((debtor) => debtor.deudaTotal >= min)
     .filter((debtor) => !max || debtor.deudaTotal <= max)
     .filter((debtor) => usableContacts(debtor, type).length);
@@ -1623,6 +1658,7 @@ function bindEvents() {
   $("execManagementExactDate").addEventListener("input", renderExecutiveRows);
   $("execManagementFrom").addEventListener("input", renderExecutiveRows);
   $("execManagementTo").addEventListener("input", renderExecutiveRows);
+  $("clearCampaignExcluded").addEventListener("click", clearCampaignExcluded);
   $("clearExecFilters").addEventListener("click", () => {
     $("execStateFilter").value = "";
     $("execContactFilter").value = "";
