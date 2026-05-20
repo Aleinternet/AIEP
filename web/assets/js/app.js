@@ -212,7 +212,25 @@ function debtorRutMatch(debtor, rut) {
 }
 
 function contactKey(debtor, type, value) {
+  return `${debtor.id}|${type}|${normalizedContactValue(type, value)}`;
+}
+
+function legacyContactKey(debtor, type, value) {
   return `${debtor.id}|${type}|${value}`;
+}
+
+function normalizedContactValue(type, value) {
+  const clean = String(value || "").trim();
+  if (type === "telefono") return phoneForWhatsApp(clean) || clean.replace(/\D/g, "");
+  return clean.toLowerCase();
+}
+
+function contactRecord(debtor, type, value) {
+  return store.contacts[contactKey(debtor, type, value)] || store.contacts[legacyContactKey(debtor, type, value)] || {};
+}
+
+function isIgnoredContact(debtor, type, value) {
+  return contactRecord(debtor, type, value).status === "ignore";
 }
 
 function currentDebtorFiles() {
@@ -437,6 +455,61 @@ function managementSummary(debtor) {
   return `<span class="management-chip">${recent.length} gest.</span><small>${channels || "Sin canal"}</small>`;
 }
 
+function executiveManagementDateRange() {
+  const exact = $("execManagementExactDate")?.value || "";
+  if (exact) return { from: exact, to: exact };
+  return {
+    from: $("execManagementFrom")?.value || "",
+    to: $("execManagementTo")?.value || "",
+  };
+}
+
+function visibleManagementDates() {
+  const { from, to } = executiveManagementDateRange();
+  return [...new Set(store.entries.map((entry) => dateOnly(entry.date)).filter(Boolean))]
+    .filter((date) => (!from || date >= from) && (!to || date <= to))
+    .sort()
+    .reverse();
+}
+
+function managementDateLabel(date) {
+  const parsed = new Date(`${date}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return date;
+  return parsed.toLocaleDateString("es-CL", { day: "2-digit", month: "2-digit", year: "2-digit" });
+}
+
+function managementEntriesOnDate(debtor, date) {
+  return entriesForDebtor(debtor).filter((entry) => dateOnly(entry.date) === date);
+}
+
+function managementDateSummary(debtor, date) {
+  const entries = managementEntriesOnDate(debtor, date);
+  if (!entries.length) return `<span class="management-day-empty">-</span>`;
+  const channels = [...new Set(entries.map((entry) => entry.channel).filter(Boolean))].join(" / ");
+  const latest = entries[0];
+  return `
+    <span class="management-day-chip">${entries.length} gest.</span>
+    <small>${escapeHtml(channels || "Sin canal")}</small>
+    <small>${escapeHtml(latest.result || latest.comment || "Gestion registrada")}</small>
+  `;
+}
+
+function renderExecutiveHead(managementDates) {
+  $("executiveHead").innerHTML = `
+    <tr>
+      <th>Titular</th>
+      <th>RUT</th>
+      <th>Estado</th>
+      <th>Saldo capital</th>
+      <th>Oferta</th>
+      <th>Contacto</th>
+      <th>Ult. 3 dias</th>
+      <th>Dias s/gestion</th>
+      ${managementDates.map((date) => `<th class="management-date-head">Gestion ${managementDateLabel(date)}</th>`).join("")}
+    </tr>
+  `;
+}
+
 function lastManagementAgeLabel(debtor) {
   const days = daysSinceLastManagement(debtor);
   if (days === null) return "Nunca";
@@ -463,6 +536,11 @@ function executiveFilter(debtor) {
 }
 
 function renderExecutiveRows() {
+  const managementDates = visibleManagementDates();
+  renderExecutiveHead(managementDates);
+  if ($("executiveTable")) {
+    $("executiveTable").style.minWidth = `${1120 + (managementDates.length * 170)}px`;
+  }
   executiveRows = data.debtors.filter(executiveFilter).sort((a, b) => {
     const paidA = effectiveState(a).includes("pagado") ? 1 : 0;
     const paidB = effectiveState(b).includes("pagado") ? 1 : 0;
@@ -479,6 +557,7 @@ function renderExecutiveRows() {
       <td>${contactLabel(d)}</td>
       <td>${managementSummary(d)}</td>
       <td>${lastManagementAgeLabel(d)}</td>
+      ${managementDates.map((date) => `<td class="management-date-cell">${managementDateSummary(d, date)}</td>`).join("")}
     </tr>
   `).join("");
   document.querySelectorAll("#executiveRows tr").forEach((row) => {
@@ -767,7 +846,7 @@ function renderHistoryCards(debtor) {
 function renderContacts(debtor, type, values) {
   if (!values.length) return `<div class="detail-empty">Sin ${type === "telefono" ? "teléfonos" : "correos"} registrados.</div>`;
   return values.map((value) => {
-    const saved = store.contacts[contactKey(debtor, type, value)] || {};
+    const saved = contactRecord(debtor, type, value);
     const cls = saved.status === "ok" ? "ok" : saved.status === "ignore" ? "ignore" : saved.status === "manual" ? "manual" : "";
     const message = buildContactMessage(debtor, type, value);
     return `
@@ -1011,7 +1090,8 @@ function updateContactStatus(event) {
   const wrapper = btn.closest(".contact-item");
   const comment = wrapper.querySelector("[data-contact-comment]")?.value.trim() || "";
   const category = wrapper.querySelector("[data-contact-category]")?.value || "";
-  store.contacts[contactKey(selectedDebtor, btn.dataset.type, btn.dataset.value)] = {
+  const key = contactKey(selectedDebtor, btn.dataset.type, btn.dataset.value);
+  store.contacts[key] = {
     status: btn.dataset.contactAction,
     category,
     comment,
@@ -1027,7 +1107,7 @@ function saveContactMeta(event) {
   const comment = wrapper.querySelector("[data-contact-comment]")?.value.trim() || "";
   const category = wrapper.querySelector("[data-contact-category]")?.value || "";
   const key = contactKey(selectedDebtor, btn.dataset.type, btn.dataset.value);
-  const current = store.contacts[key] || {};
+  const current = contactRecord(selectedDebtor, btn.dataset.type, btn.dataset.value);
   store.contacts[key] = {
     ...current,
     status: current.status || "manual",
@@ -1042,6 +1122,7 @@ function saveContactMeta(event) {
 function deleteContactMeta(event) {
   const btn = event.currentTarget;
   delete store.contacts[contactKey(selectedDebtor, btn.dataset.type, btn.dataset.value)];
+  delete store.contacts[legacyContactKey(selectedDebtor, btn.dataset.type, btn.dataset.value)];
   writeJson("abg_contacts", store.contacts);
   renderExecutiveDetail();
 }
@@ -1052,7 +1133,7 @@ function usableContacts(debtor, type) {
     .map((value) => String(value || "").trim())
     .filter(Boolean)
     .filter((value) => type === "correo" || isValidWhatsAppPhone(value))
-    .filter((value) => store.contacts[contactKey(debtor, type, value)]?.status !== "ignore");
+    .filter((value) => !isIgnoredContact(debtor, type, value));
 }
 
 function hasManagementToday(debtor) {
@@ -1539,11 +1620,17 @@ function bindEvents() {
   $("execContactFilter").addEventListener("input", renderExecutiveRows);
   $("execRecentFilter").addEventListener("input", renderExecutiveRows);
   $("execNoManagementDays").addEventListener("input", renderExecutiveRows);
+  $("execManagementExactDate").addEventListener("input", renderExecutiveRows);
+  $("execManagementFrom").addEventListener("input", renderExecutiveRows);
+  $("execManagementTo").addEventListener("input", renderExecutiveRows);
   $("clearExecFilters").addEventListener("click", () => {
     $("execStateFilter").value = "";
     $("execContactFilter").value = "";
     $("execRecentFilter").value = "";
     $("execNoManagementDays").value = "";
+    $("execManagementExactDate").value = "";
+    $("execManagementFrom").value = "";
+    $("execManagementTo").value = "";
     $("globalSearch").value = "";
     renderExecutiveRows();
   });

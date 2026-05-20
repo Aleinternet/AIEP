@@ -121,6 +121,15 @@
               <label>Dias sin gestion
                 <input id="execNoManagementDays" type="number" min="0" placeholder="Ej: 7">
               </label>
+              <label>Dia gestion
+                <input id="execManagementExactDate" type="date">
+              </label>
+              <label>Gestion desde
+                <input id="execManagementFrom" type="date">
+              </label>
+              <label>Gestion hasta
+                <input id="execManagementTo" type="date">
+              </label>
               <button id="clearExecFilters" type="button">Limpiar filtros</button>
             </div>
             <section class="campaign-panel">
@@ -159,10 +168,8 @@
               </div>
             </section>
             <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr><th>Titular</th><th>RUT</th><th>Estado</th><th>Saldo capital</th><th>Oferta</th><th>Contacto</th><th>Ult. 3 dias</th><th>Dias s/gestion</th></tr>
-                </thead>
+              <table id="executiveTable" class="executive-table">
+                <thead id="executiveHead"></thead>
                 <tbody id="executiveRows"></tbody>
               </table>
             </div>
