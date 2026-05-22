@@ -50,6 +50,8 @@ let campaignQueue = [];
 let campaignChannel = "";
 let campaignTotal = 0;
 let campaignSkippedToday = 0;
+let campaignSkippedByRules = 0;
+let lastExcludeIndex = null;
 let whatsappWindow = null;
 
 function applyRemoteData(remote) {
@@ -239,17 +241,32 @@ function isCampaignExcluded(debtor) {
 }
 
 function toggleCampaignExcluded(event) {
+  event.preventDefault();
   event.stopPropagation();
   const id = event.currentTarget.dataset.debtorId;
-  if (!id) return;
-  if (store.campaignExcluded[id]) delete store.campaignExcluded[id];
-  else store.campaignExcluded[id] = true;
+  const index = Number(event.currentTarget.dataset.rowIndex);
+  if (!id || Number.isNaN(index)) return;
+
+  const targetState = !store.campaignExcluded[id];
+  if (event.shiftKey && lastExcludeIndex !== null) {
+    const start = Math.min(lastExcludeIndex, index);
+    const end = Math.max(lastExcludeIndex, index);
+    executiveRows.slice(start, end + 1).forEach((debtor) => {
+      if (targetState) store.campaignExcluded[debtor.id] = true;
+      else delete store.campaignExcluded[debtor.id];
+    });
+  } else {
+    if (targetState) store.campaignExcluded[id] = true;
+    else delete store.campaignExcluded[id];
+  }
+  lastExcludeIndex = index;
   writeJson("abg_campaign_excluded", store.campaignExcluded);
   renderExecutiveRows();
 }
 
 function clearCampaignExcluded() {
   store.campaignExcluded = {};
+  lastExcludeIndex = null;
   writeJson("abg_campaign_excluded", store.campaignExcluded);
   renderExecutiveRows();
   setText("campaignStatus", "Exclusiones X limpiadas.");
@@ -577,7 +594,7 @@ function renderExecutiveRows() {
     <tr data-index="${index}" class="${rowClass(d)} ${isCampaignExcluded(d) ? "campaign-excluded-row" : ""} ${selectedDebtor?.id === d.id ? "selected-row" : ""}">
       <td>
         <div class="name-cell">
-          <button type="button" class="exclude-toggle ${isCampaignExcluded(d) ? "active" : ""}" data-debtor-id="${escapeAttr(d.id)}" title="${isCampaignExcluded(d) ? "Incluir en masivos" : "Excluir de masivos"}">${isCampaignExcluded(d) ? "X" : ""}</button>
+          <button type="button" class="exclude-toggle ${isCampaignExcluded(d) ? "active" : ""}" data-debtor-id="${escapeAttr(d.id)}" data-row-index="${index}" title="${isCampaignExcluded(d) ? "Incluir en masivos" : "Excluir de masivos"} · Shift marca rango">${isCampaignExcluded(d) ? "X" : ""}</button>
           <div>
             <span class="agreement-dot ${agreementDotClass(d)}"></span>${commentCount(d) ? `<span class="comment-badge row-comment-badge" title="Tiene comentarios internos"></span>` : ""}<strong>${d.nombreTitular || "Sin nombre"}</strong><br><span class="muted">${d.nombreAlumno || "Alumno no informado"}</span>
           </div>
@@ -1174,6 +1191,41 @@ function hasManagementToday(debtor) {
   return entriesForDebtor(debtor).some((entry) => dateOnly(entry.date) === today());
 }
 
+function dateDaysAgo(days) {
+  const date = new Date(`${today()}T00:00:00`);
+  date.setDate(date.getDate() - days);
+  return date.toISOString().slice(0, 10);
+}
+
+function hasManagementOnDate(debtor, date) {
+  return entriesForDebtor(debtor).some((entry) => dateOnly(entry.date) === date);
+}
+
+function campaignSkipDates() {
+  return [
+    $("campaignSkipYesterday")?.checked ? dateDaysAgo(1) : "",
+    $("campaignSkipTwoDays")?.checked ? dateDaysAgo(2) : "",
+    $("campaignSkipThreeDays")?.checked ? dateDaysAgo(3) : "",
+  ].filter(Boolean);
+}
+
+function hasCampaignSkipDateManagement(debtor) {
+  const dates = campaignSkipDates();
+  return dates.length > 0 && dates.some((date) => hasManagementOnDate(debtor, date));
+}
+
+function campaignBlockReason(debtor) {
+  if (getOffer(debtor)) return "convenio activo";
+  if (hasManagementToday(debtor)) return "gestion hoy";
+  if (hasCampaignSkipDateManagement(debtor)) return "gestion reciente";
+  return "";
+}
+
+function campaignSkippedText() {
+  if (!campaignSkippedByRules) return "";
+  return ` Omitidos por convenio/gestiones recientes: ${campaignSkippedByRules}.`;
+}
+
 function campaignTargets(type) {
   const min = parseMoney($("campaignDebtMin").value);
   const max = parseMoney($("campaignDebtMax").value);
@@ -1185,8 +1237,9 @@ function campaignTargets(type) {
     .filter((debtor) => !max || debtor.deudaTotal <= max)
     .filter((debtor) => usableContacts(debtor, type).length);
   campaignSkippedToday = validDebtors.filter(hasManagementToday).length;
+  campaignSkippedByRules = validDebtors.filter((debtor) => campaignBlockReason(debtor)).length;
   return validDebtors
-    .filter((debtor) => !hasManagementToday(debtor))
+    .filter((debtor) => !campaignBlockReason(debtor))
     .flatMap((debtor) => usableContacts(debtor, type).map((value) => ({ debtor, value })))
     .slice(0, limit);
 }
@@ -1197,8 +1250,7 @@ function startCampaign(type) {
   campaignQueue = campaignTargets(type);
   campaignTotal = campaignQueue.length;
   if (!campaignQueue.length) {
-    const skipped = campaignSkippedToday ? ` ${campaignSkippedToday} omitido(s) por gestion hoy.` : "";
-    setText("campaignStatus", `Sin contactos para el filtro seleccionado.${skipped}`);
+    setText("campaignStatus", `Sin contactos para el filtro seleccionado.${campaignSkippedText()}`);
     return;
   }
   setText("campaignStatus", `${campaignQueue.length} mensajes en cola. Siguiente: ${campaignTargetLabel(campaignQueue[0])}`);
@@ -1213,8 +1265,7 @@ function campaignTargetLabel(item) {
 
 function deliverCampaignItem() {
   if (!campaignQueue.length) {
-    const skipped = campaignSkippedToday ? ` Omitidos por gestion hoy: ${campaignSkippedToday}.` : "";
-    setText("campaignStatus", `Campana finalizada.${skipped}`);
+    setText("campaignStatus", `Campana finalizada.${campaignSkippedText()}`);
     campaignChannel = "";
     return;
   }
@@ -1228,8 +1279,7 @@ function deliverCampaignItem() {
   }
   const sent = campaignTotal - campaignQueue.length;
   const next = campaignQueue.length ? ` Siguiente: ${campaignTargetLabel(campaignQueue[0])}.` : "";
-  const skipped = campaignSkippedToday ? ` Omitidos por gestion hoy: ${campaignSkippedToday}.` : "";
-  setText("campaignStatus", `${sent} enviados/preparados y registrados. Quedan ${campaignQueue.length}.${next}${skipped}`);
+  setText("campaignStatus", `${sent} enviados/preparados y registrados. Quedan ${campaignQueue.length}.${next}${campaignSkippedText()}`);
   const intervalMs = Math.max(5, Number($("campaignInterval").value || 20)) * 1000;
   if (campaignQueue.length) campaignTimer = window.setTimeout(deliverCampaignItem, intervalMs);
 }
@@ -1259,6 +1309,7 @@ function stopCampaign(updateStatus = true) {
   campaignChannel = "";
   campaignTotal = 0;
   campaignSkippedToday = 0;
+  campaignSkippedByRules = 0;
   if (updateStatus) setText("campaignStatus", "Campana detenida");
 }
 
