@@ -123,15 +123,16 @@ function Save-Account {
 function Select-OutlookAccount {
   param(
     [object]$Outlook,
-    [string]$Preferred = ""
+    [string]$Preferred = "",
+    [switch]$ForcePrompt
   )
 
   $selection = $Preferred
-  if ([string]::IsNullOrWhiteSpace($selection)) {
+  if (-not $ForcePrompt -and [string]::IsNullOrWhiteSpace($selection)) {
     $selection = Read-SavedAccount
   }
 
-  if (-not [string]::IsNullOrWhiteSpace($selection)) {
+  if (-not $ForcePrompt -and -not [string]::IsNullOrWhiteSpace($selection)) {
     $account = Find-OutlookAccount -Outlook $Outlook -Selection $selection
     if ($null -ne $account) {
       Save-Account -Account $account
@@ -235,7 +236,7 @@ $outlook = New-Object -ComObject Outlook.Application
 
 switch ($action) {
   "select-account" {
-    $account = Select-OutlookAccount -Outlook $outlook
+    $account = Select-OutlookAccount -Outlook $outlook -ForcePrompt
     $text = Get-OutlookAccountText -Account $account
     Write-HelperLog "Cuenta seleccionada: $text"
     [Microsoft.VisualBasic.Interaction]::MsgBox("Cuenta Outlook seleccionada: $text", [Microsoft.VisualBasic.MsgBoxStyle]4160, "ABG RECOV")
