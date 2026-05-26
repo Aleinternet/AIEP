@@ -1078,6 +1078,10 @@ function outlookClassicModeEnabled() {
   return localStorage.getItem("abg_outlook_classic_mode") === "1";
 }
 
+function outlookAutoSendEnabled() {
+  return localStorage.getItem("abg_outlook_auto_send_mode") === "1";
+}
+
 function whatsappLocalModeEnabled() {
   return localStorage.getItem("abg_whatsapp_local_mode") === "1";
 }
@@ -1089,14 +1093,35 @@ function base64UrlEncode(value) {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
-function openMailClient(email, body, htmlBody = "") {
-  if (outlookClassicModeEnabled()) {
+function openOutlookProtocol(payload) {
+  window.location.href = `abg-outlook://compose?payload=${base64UrlEncode(JSON.stringify(payload))}`;
+}
+
+function selectOutlookAccount() {
+  openOutlookProtocol({ action: "select-account" });
+  setText("campaignStatus", "Seleccione la cuenta de envio en Outlook Classic.");
+}
+
+function whatsappTextToEmailHtml(text) {
+  const withBold = escapeHtml(text).replace(/\*(.+?)\*/g, "<strong>$1</strong>");
+  return `<div style="font-family:Arial,sans-serif;font-size:11pt;line-height:1.45;">${withBold.replace(/\n/g, "<br>")}</div>`;
+}
+
+function buildWhatsappEmailHtml(debtor) {
+  return whatsappTextToEmailHtml(buildWhatsappMessage(debtor));
+}
+
+function openMailClient(email, body, htmlBody = "", options = {}) {
+  const autoSend = options.autoSend === true;
+  if (outlookClassicModeEnabled() || autoSend) {
     const payload = {
+      action: autoSend ? "send" : "compose",
       to: email,
       subject: "Regularizacion deuda AIEP",
+      bodyText: body,
       htmlBody: htmlBody || `<pre>${escapeHtml(body)}</pre>`,
     };
-    window.location.href = `abg-outlook://compose?payload=${base64UrlEncode(JSON.stringify(payload))}`;
+    openOutlookProtocol(payload);
     return;
   }
   window.location.href = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent("Regularizacion deuda AIEP")}&body=${encodeURIComponent(body)}`;
@@ -1273,7 +1298,8 @@ function deliverCampaignItem() {
   setText("campaignStatus", `Enviando/preparando: ${campaignTargetLabel(item)}`);
   recordCampaignManagement(item.debtor, campaignChannel, item.value);
   if (campaignChannel === "correo") {
-    openMailClient(item.value, buildEmailBody(item.debtor, item.value), buildEmailHtmlBody(item.debtor, item.value));
+    const message = buildWhatsappMessage(item.debtor);
+    openMailClient(item.value, message, buildWhatsappEmailHtml(item.debtor), { autoSend: outlookAutoSendEnabled() });
   } else {
     openWhatsAppClient(item.value, buildWhatsappMessage(item.debtor));
   }
@@ -1728,6 +1754,11 @@ function bindEvents() {
   $("outlookClassicMode").addEventListener("change", (event) => {
     localStorage.setItem("abg_outlook_classic_mode", event.currentTarget.checked ? "1" : "0");
   });
+  $("outlookAutoSendMode").checked = outlookAutoSendEnabled();
+  $("outlookAutoSendMode").addEventListener("change", (event) => {
+    localStorage.setItem("abg_outlook_auto_send_mode", event.currentTarget.checked ? "1" : "0");
+  });
+  $("selectOutlookAccount").addEventListener("click", selectOutlookAccount);
   $("whatsappLocalMode").checked = whatsappLocalModeEnabled();
   $("whatsappLocalMode").addEventListener("change", (event) => {
     localStorage.setItem("abg_whatsapp_local_mode", event.currentTarget.checked ? "1" : "0");

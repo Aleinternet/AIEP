@@ -15,4 +15,4 @@ Set-ItemProperty -Path $protocolRoot -Name "URL Protocol" -Value ""
 Set-Item -Path $commandRoot -Value $command
 
 Write-Host "OK protocolo abg-outlook instalado para este usuario."
-Write-Host "En la web, active la casilla 'Outlook Classic local' para usar correos HTML con tabla."
+Write-Host "En la web, active 'Outlook Classic local' para borradores o 'Autoenviar correo Outlook' para envio masivo automatico."
