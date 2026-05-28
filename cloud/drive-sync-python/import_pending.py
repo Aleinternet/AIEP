@@ -49,6 +49,21 @@ def money(value):
     return int(cleaned or "0")
 
 
+def date_text(value):
+    if not value:
+        return None
+    if hasattr(value, "strftime"):
+        return value.strftime("%Y-%m-%d")
+    raw = text(value)
+    match = re.match(r"^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})$", raw)
+    if not match:
+        return raw or None
+    year = match.group(3)
+    if len(year) == 2:
+        year = f"20{year}"
+    return f"{year}-{match.group(2).zfill(2)}-{match.group(1).zfill(2)}"
+
+
 def find_value(row, aliases):
     normalized = {normalize_header(alias) for alias in aliases}
     for key, value in row.items():
@@ -75,7 +90,8 @@ def numbered_values(row, prefix, limit):
 
 
 def map_debtor(row):
-    rut_titular = text(find_value(row, ["rut titular", "rut_titular", "rut deudor", "rut_deudor"]))
+    rut_deudor = text(find_value(row, ["rut deudor", "rut_deudor", "rut cliente", "rut_cliente"]))
+    rut_titular = text(find_value(row, ["rut titular", "rut_titular"])) or rut_deudor
     rut_alumno = text(find_value(row, ["rut alumno", "rut_alumno", "rut estudiante", "rut_estudiante"]))
     debtor_id = text(find_value(row, ["id", "id rem", "id_rem", "codigo", "operacion", "remesa"]))
     if not debtor_id:
@@ -88,6 +104,8 @@ def map_debtor(row):
 
     return {
         "id": debtor_id.strip(),
+        "rut_deudor": rut_deudor or rut_titular,
+        "rut_deudor_normalizado": normalize_rut(rut_deudor or rut_titular),
         "rut_titular": rut_titular,
         "rut_titular_normalizado": normalize_rut(rut_titular),
         "nombre_titular": text(find_value(row, ["nombre titular", "titular", "nombre_titular", "nombre deudor", "nombre_deudor", "deudor"])),
@@ -102,6 +120,17 @@ def map_debtor(row):
         "direccion": text(find_value(row, ["direccion"])),
         "rol": text(find_value(row, ["rol"])),
         "tribunal": text(find_value(row, ["tribunal"])),
+        "procedimiento": text(find_value(row, ["procedimiento", "escrito de la demanda", "escrito_de_la_demanda"])) or ("Procedimiento (CIVIL)" if text(find_value(row, ["rol"])) or text(find_value(row, ["tribunal"])) else ""),
+        "usuario": text(find_value(row, ["usuario", "ejecutivo"])),
+        "equipo": text(find_value(row, ["equipo"])),
+        "asignacion": text(find_value(row, ["asignacion", "asignación"])),
+        "fecha_emision": date_text(find_value(row, ["fecha emision", "fecha_emision"])),
+        "atraso_gestion": text(find_value(row, ["atraso gestion", "atraso_gestion"])),
+        "tipo_contacto": text(find_value(row, ["tipo contacto", "tipo_contacto"])),
+        "resultado": text(find_value(row, ["resultado"])),
+        "observacion": text(find_value(row, ["observacion", "observación"])),
+        "ubicabilidad": text(find_value(row, ["ubicabilidad"])),
+        "tel_validado": text(find_value(row, ["tel validado", "tel_validado"])),
         "saldo_capital": saldo_capital,
         "intereses_mora": intereses_mora,
         "gastos_cobranza": gastos_cobranza,

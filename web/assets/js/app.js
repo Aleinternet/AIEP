@@ -39,6 +39,7 @@ const store = {
   agreements: readJson("abg_agreements", readJson("abg_offers", {})),
   comments: readJson("abg_comments", {}),
   campaignExcluded: readJson("abg_campaign_excluded", {}),
+  bankRows: readJson("abg_bank_rows", []),
 };
 
 let session = null;
@@ -130,6 +131,11 @@ const viewByRoute = {
   archivos: "localFiles",
 };
 
+views.ejecutivo.splice(1, 0, { id: "executiveValidation", label: "Validacion" });
+titles.executiveValidation = "Validacion de pagos";
+routeByView.executiveValidation = "callcenter/validacion";
+viewByRoute["callcenter/validacion"] = "executiveValidation";
+
 function $(id) {
   return document.getElementById(id);
 }
@@ -187,6 +193,39 @@ function getOffer(debtor) {
 
 function getOfferAmount(debtor) {
   return getOffer(debtor)?.amount || 0;
+}
+
+function agreementPaidAmount(debtor) {
+  const agreement = getOffer(debtor);
+  const payerRut = normalizeRut(agreement?.payerRut || "");
+  const debtorRuts = [debtor.rutTitular, debtor.rutAlumno, debtor.rutDeudor].map(normalizeRut).filter(Boolean);
+  if (payerRut) debtorRuts.push(payerRut);
+  const validFiles = store.files
+    .filter((file) => file.debtorId === debtor.id && file.category === "comprobante" && file.status === "validado")
+    .reduce((sum, file) => sum + Number(file.amount || 0), 0);
+  const validBankRows = allBankRows()
+    .filter((row) => ["validado", "conciliado"].includes(row.status))
+    .filter((row) => {
+      const values = [row.associatedRut, row.payerRut, row.rut].map(normalizeRut).filter(Boolean);
+      return values.some((value) => debtorRuts.includes(value));
+    })
+    .reduce((sum, row) => sum + Number(row.monto || 0), 0);
+  return validFiles + validBankRows;
+}
+
+function agreementRemainingAmount(debtor, agreement = getOffer(debtor)) {
+  if (!agreement) return 0;
+  return Math.max(0, Number(agreement.amount || 0) - agreementPaidAmount(debtor));
+}
+
+function agreementInstallmentAmount(agreement) {
+  if (!agreement || agreement.type !== "cuotas") return Number(agreement?.amount || 0);
+  const base = Math.max(0, Number(agreement.amount || 0) - Number(agreement.downPayment || 0));
+  return Math.round(base / Math.max(1, Number(agreement.installments || 1)));
+}
+
+function legalProcedure(debtor) {
+  return debtor.procedimiento || debtor.escritoDemanda || ((debtor.rol || debtor.tribunal) ? "Procedimiento (CIVIL)" : "");
 }
 
 function agreementTypeLabel(agreement) {
@@ -331,6 +370,7 @@ function showView(id) {
   const route = routeByView[id];
   if (route && location.hash.replace(/^#\/?/, "") !== route) history.replaceState(null, "", `#/${route}`);
   if (id === "localFiles") renderFileRepository();
+  if (id === "executiveValidation") renderValidationQueue();
   if (id === "managementHome") renderManagement();
   if (id === "managementAgreements") renderAgreementRegistry();
   if (id === "managementBank") renderBankRows();
@@ -369,7 +409,7 @@ function login(role, debtor = null) {
   const username = role === "deudor" ? (debtor?.rutTitular || debtor?.rutAlumno || debtor?.rutDeudor) : $("internalUser").value.trim();
   session = { role, debtorId: debtor?.id || null, username };
   sessionStartedAt = new Date();
-  selectedDebtor = debtor || data.debtors[0];
+  selectedDebtor = role === "deudor" ? debtor : null;
   document.body.classList.remove("logged-out");
   renderEntryMeta();
   loadIndicators();
@@ -456,6 +496,11 @@ function fillFilters() {
   for (const id of ["execStateFilter", "reportStateFilter", "agreementStateFilter"]) {
     const node = $(id);
     if (node && node.options.length === 1) node.insertAdjacentHTML("beforeend", ["Convenio en curso", ...states].map((state) => `<option>${state}</option>`).join(""));
+  }
+  const assignments = [...new Set(data.debtors.map((d) => d.asignacion || d.usuario || d.equipo).filter(Boolean))].sort();
+  for (const id of ["execAssignmentFilter", "reportAssignmentFilter"]) {
+    const node = $(id);
+    if (node && node.options.length === 1) node.insertAdjacentHTML("beforeend", assignments.map((item) => `<option>${escapeAttr(item)}</option>`).join(""));
   }
 }
 
@@ -561,8 +606,13 @@ function executiveFilter(debtor) {
   const state = $("execStateFilter").value;
   const contact = $("execContactFilter").value;
   const recent = $("execRecentFilter")?.value || "";
+  const agreementFilter = $("execAgreementFilter")?.value || "";
+  const assignment = $("execAssignmentFilter")?.value || "";
+  const minDebt = parseMoney($("execDebtMin")?.value || "");
+  const maxDebt = parseMoney($("execDebtMax")?.value || "");
   const minDaysWithoutManagement = Number($("execNoManagementDays")?.value || 0);
-  const matchesQuery = !q || normalizeText([debtor.nombreTitular, debtor.rutTitular, debtor.rutAlumno, debtor.nombreAlumno, debtor.estado].join(" ")).includes(q);
+  const agreement = getOffer(debtor);
+  const matchesQuery = !q || normalizeText([debtor.nombreTitular, debtor.rutTitular, debtor.rutAlumno, debtor.nombreAlumno, debtor.estado, debtor.direccion, debtor.comuna, debtor.region, debtor.rol, debtor.tribunal, debtor.asignacion].join(" ")).includes(q);
   const matchesContact = !contact || (contact === "phone" && debtor.telefonos.length) || (contact === "email" && debtor.correos.length) || (contact === "none" && !debtor.telefonos.length && !debtor.correos.length);
   const recentCount = recentEntriesForDebtor(debtor).length;
   const age = daysSinceLastManagement(debtor);
@@ -571,7 +621,14 @@ function executiveFilter(debtor) {
     || (recent === "none3" && recentCount === 0)
     || (recent === "never" && age === null);
   const matchesAge = !minDaysWithoutManagement || age === null || age >= minDaysWithoutManagement;
-  return matchesQuery && (!state || displayState(debtor) === state) && matchesContact && matchesRecent && matchesAge;
+  const matchesAgreement = !agreementFilter
+    || (agreementFilter === "with" && agreement)
+    || (agreementFilter === "without" && !agreement)
+    || (agreement && agreement.type === agreementFilter);
+  const debtorAssignment = debtor.asignacion || debtor.usuario || debtor.equipo || "";
+  const matchesAssignment = !assignment || debtorAssignment === assignment;
+  const matchesDebt = (!minDebt || debtor.deudaTotal >= minDebt) && (!maxDebt || debtor.deudaTotal <= maxDebt);
+  return matchesQuery && (!state || displayState(debtor) === state) && matchesContact && matchesRecent && matchesAge && matchesAgreement && matchesAssignment && matchesDebt;
 }
 
 function sortedExecutiveDebtors() {
@@ -580,6 +637,30 @@ function sortedExecutiveDebtors() {
     const paidB = effectiveState(b).includes("pagado") ? 1 : 0;
     if (paidA !== paidB) return paidA - paidB;
     return b.saldoCapital - a.saldoCapital;
+  });
+}
+
+function debtorMatchesAgreementFilter(debtor, filter) {
+  const agreement = getOffer(debtor);
+  return !filter
+    || (filter === "with" && agreement)
+    || (filter === "without" && !agreement)
+    || (agreement && agreement.type === filter);
+}
+
+function filteredManagementDebtors() {
+  const state = $("reportStateFilter").value;
+  const agreementFilter = $("reportAgreementFilter")?.value || "";
+  const assignment = $("reportAssignmentFilter")?.value || "";
+  const minDebt = parseMoney($("reportDebtMin")?.value || "");
+  const maxDebt = parseMoney($("reportDebtMax")?.value || "");
+  return data.debtors.filter((debtor) => {
+    const debtorAssignment = debtor.asignacion || debtor.usuario || debtor.equipo || "";
+    return (!state || displayState(debtor) === state)
+      && debtorMatchesAgreementFilter(debtor, agreementFilter)
+      && (!assignment || debtorAssignment === assignment)
+      && (!minDebt || debtor.deudaTotal >= minDebt)
+      && (!maxDebt || debtor.deudaTotal <= maxDebt);
   });
 }
 
@@ -665,8 +746,14 @@ function agreementStatus(agreement) {
   return "yellow";
 }
 
+function agreementPaymentSchedule(agreement) {
+  if (!agreement) return [];
+  if (Array.isArray(agreement.payments) && agreement.payments.length) return agreement.payments;
+  return (agreement.paymentDates || [agreement.startDate].filter(Boolean)).map((date) => ({ date, amount: 0, label: "Pago" }));
+}
+
 function nextPaymentDate(agreement) {
-  const dates = agreement.paymentDates || [agreement.startDate].filter(Boolean);
+  const dates = agreementPaymentSchedule(agreement).map((payment) => payment.date).filter(Boolean);
   return dates.find((date) => date >= today()) || dates[dates.length - 1] || "";
 }
 
@@ -679,7 +766,13 @@ function contactLabel(debtor) {
 
 function renderExecutiveDetail() {
   const d = selectedDebtor;
-  if (!d) return;
+  if (!d) {
+    setText("execSelectedStatus", "Seleccione deudor");
+    if ($("selectedCommentIcon")) $("selectedCommentIcon").hidden = true;
+    $("executiveDetail").className = "detail-empty";
+    $("executiveDetail").innerHTML = "Seleccione cliente para ver ficha, contactos, deuda, convenios y bitacora.";
+    return;
+  }
   const offer = getOffer(d);
   setText("execSelectedStatus", displayState(d));
   $("selectedCommentIcon").hidden = commentCount(d) === 0;
@@ -708,6 +801,14 @@ function renderExecutiveDetail() {
         <strong>${d.nombreAlumno || "Sin alumno"}</strong>
         <small>${d.rutAlumno || "Sin RUT alumno"}</small>
       </div>
+    </div>
+    <div class="legal-grid">
+      ${detailItem("Direccion", d.direccion)}
+      ${detailItem("Comuna / region", [d.comuna, d.region].filter(Boolean).join(" / "))}
+      ${detailItem("Rol judicial", d.rol)}
+      ${detailItem("Tribunal", d.tribunal)}
+      ${detailItem("Procedimiento", legalProcedure(d))}
+      ${detailItem("Asignacion", d.asignacion || d.usuario || d.equipo)}
     </div>
     <div class="excel-card">
       <table class="mini-table">
@@ -770,10 +871,16 @@ function detailItem(label, value) {
 function renderAgreementSummary(debtor) {
   const agreement = getOffer(debtor);
   if (!agreement) return `<div class="detail-empty">Sin convenio registrado.</div>`;
+  const paid = agreementPaidAmount(debtor);
+  const remaining = agreementRemainingAmount(debtor, agreement);
+  const installment = agreementInstallmentAmount(agreement);
   return `
     <div class="agreement-summary ${agreement.type === "cuotas" ? "installment-row" : "settlement-row"}">
       <strong>${agreementTypeLabel(agreement)} · ${fmtMoney.format(agreement.amount)}</strong>
       <span>Inicio: ${agreement.startDate || "Sin fecha"} · Próximo pago: ${nextPaymentDate(agreement) || "Sin fecha"}</span>
+      ${agreement.type === "cuotas" ? `<span>Pie: ${fmtMoney.format(agreement.downPayment || 0)} Â· Cuota estimada: ${fmtMoney.format(installment)}</span>` : ""}
+      <span>Pagado validado: ${fmtMoney.format(paid)} Â· Saldo convenio: ${fmtMoney.format(remaining)}</span>
+      ${agreement.payerRut ? `<span>RUT que paga: ${escapeHtml(agreement.payerRut)}</span>` : ""}
       ${renderAgreementMiniCalendar(agreement)}
       ${agreement.notes ? `<p>${agreement.notes}</p>` : ""}
       <div class="agreement-actions">
@@ -785,7 +892,7 @@ function renderAgreementSummary(debtor) {
 }
 
 function renderAgreementMiniCalendar(agreement) {
-  const dates = agreement.paymentDates || [agreement.startDate].filter(Boolean);
+  const dates = agreementPaymentSchedule(agreement).map((payment) => payment.date).filter(Boolean);
   if (!dates.length) return "";
   const marked = new Set(dates.map((date) => Number(date.slice(8, 10))));
   const base = new Date((dates[0] || today()) + "T00:00:00");
@@ -1364,8 +1471,10 @@ function openAgreementModal() {
   $("agreementModal").hidden = false;
   $("agreementType").value = agreement?.type || "liquidacion";
   $("agreementAmount").value = agreement?.amount ? fmtMoney.format(agreement.amount) : "";
+  $("agreementDownPayment").value = agreement?.downPayment ? fmtMoney.format(agreement.downPayment) : "";
   $("agreementInstallments").value = agreement?.installments || 1;
   $("agreementStartDate").value = agreement?.startDate || today();
+  $("agreementPayerRut").value = agreement?.payerRut || "";
   $("agreementNotes").value = agreement?.notes || "";
   renderAgreementCalendar();
 }
@@ -1378,24 +1487,36 @@ function renderAgreementCalendar() {
   const type = $("agreementType").value;
   const installments = Math.max(1, Number($("agreementInstallments").value || 1));
   const start = $("agreementStartDate").value || today();
+  const amount = parseMoney($("agreementAmount").value);
+  const downPayment = parseMoney($("agreementDownPayment").value);
   $("installmentsLabel").style.display = type === "cuotas" ? "grid" : "none";
-  const dates = buildPaymentDates(type, start, installments);
-  $("agreementCalendar").innerHTML = dates.length
-    ? `<div class="agreement-calendar">${dates.map((date) => `<span><i></i>${date}</span>`).join("")}</div>`
+  $("downPaymentLabel").style.display = type === "cuotas" ? "grid" : "none";
+  const payments = buildPaymentSchedule(type, start, installments, amount, downPayment);
+  $("agreementCalendar").innerHTML = payments.length
+    ? `<div class="agreement-calendar">${payments.map((payment) => `<span><i></i>${payment.date} - ${payment.label}${payment.amount ? ` ${fmtMoney.format(payment.amount)}` : ""}</span>`).join("")}</div>`
     : "";
 }
 
-function buildPaymentDates(type, start, installments) {
+function buildPaymentSchedule(type, start, installments, amount = 0, downPayment = 0) {
   if (!start) return [];
-  if (type !== "cuotas") return [start];
-  const dates = [];
+  if (type !== "cuotas") return [{ date: start, label: "Pago total", amount }];
+  const payments = [];
   const base = new Date(start + "T00:00:00");
+  const safeDownPayment = Math.min(Math.max(0, downPayment), Math.max(0, amount));
+  const installmentAmount = Math.round(Math.max(0, amount - safeDownPayment) / Math.max(1, installments));
+  if (safeDownPayment > 0) {
+    payments.push({ date: start, label: "Pie", amount: safeDownPayment });
+  }
   for (let i = 0; i < installments; i += 1) {
     const next = new Date(base);
-    next.setMonth(base.getMonth() + i);
-    dates.push(next.toISOString().slice(0, 10));
+    next.setMonth(base.getMonth() + i + (safeDownPayment > 0 ? 1 : 0));
+    payments.push({ date: next.toISOString().slice(0, 10), label: `Cuota ${i + 1}`, amount: installmentAmount });
   }
-  return dates;
+  return payments;
+}
+
+function buildPaymentDates(type, start, installments, amount = 0, downPayment = 0) {
+  return buildPaymentSchedule(type, start, installments, amount, downPayment).map((payment) => payment.date);
 }
 
 function saveAgreement(event) {
@@ -1403,14 +1524,19 @@ function saveAgreement(event) {
   const amount = parseMoney($("agreementAmount").value);
   if (!amount) return;
   const type = $("agreementType").value;
+  const downPayment = type === "cuotas" ? Math.min(parseMoney($("agreementDownPayment").value), amount) : 0;
   const installments = type === "cuotas" ? Math.max(1, Number($("agreementInstallments").value || 1)) : 1;
   const startDate = $("agreementStartDate").value || today();
+  const payments = buildPaymentSchedule(type, startDate, installments, amount, downPayment);
   store.agreements[selectedDebtor.id] = {
     amount,
     type,
+    downPayment,
     installments,
     startDate,
-    paymentDates: buildPaymentDates(type, startDate, installments),
+    paymentDates: payments.map((payment) => payment.date),
+    payments,
+    payerRut: $("agreementPayerRut").value.trim(),
     notes: $("agreementNotes").value,
     debtorId: selectedDebtor.id,
     debtorName: selectedDebtor.nombreTitular,
@@ -1491,6 +1617,13 @@ function renderDebtorPortal() {
       ${detailItem("Alumno", d.nombreAlumno)}
       ${detailItem("RUT alumno", d.rutAlumno)}
     </div>
+    <div class="legal-grid">
+      ${detailItem("Direccion", d.direccion)}
+      ${detailItem("Comuna / region", [d.comuna, d.region].filter(Boolean).join(" / "))}
+      ${detailItem("Rol judicial", d.rol)}
+      ${detailItem("Tribunal", d.tribunal)}
+      ${detailItem("Procedimiento", legalProcedure(d))}
+    </div>
     <div class="excel-card">
       <table class="mini-table debt-table">
         <thead><tr><th>Concepto</th><th>Monto</th></tr></thead>
@@ -1506,7 +1639,7 @@ function renderDebtorPortal() {
       <strong>Mensaje de cobranza judicial</strong>
       <p>${buildJudicialMessage(d)}</p>
     </div>
-    ${offer ? `<div class="offer-block wide"><span>Detalle convenio</span><small>Inicio: ${offer.startDate || offer.date}. Adjunte comprobante luego de transferir.</small>${offer.type === "cuotas" ? `<div class="calendar-dots">${(offer.paymentDates || []).map((date) => `<span class="calendar-dot" title="${date}">${new Date(date + "T00:00:00").getDate()}</span>`).join("")}</div>` : ""}</div>` : ""}
+    ${offer ? `<div class="offer-block wide"><span>Detalle convenio</span><small>Inicio: ${offer.startDate || offer.date}. Saldo convenio: ${fmtMoney.format(agreementRemainingAmount(d, offer))}. Adjunte comprobante luego de transferir.</small>${offer.type === "cuotas" ? `<small>Pie: ${fmtMoney.format(offer.downPayment || 0)}. Cuota estimada: ${fmtMoney.format(agreementInstallmentAmount(offer))}.</small><div class="calendar-dots">${agreementPaymentSchedule(offer).map((payment) => `<span class="calendar-dot" title="${payment.label} ${payment.date}">${new Date(payment.date + "T00:00:00").getDate()}</span>`).join("")}</div>` : ""}</div>` : ""}
   `;
   $("debtorPaymentBox").hidden = false;
   $("debtorPaymentBox").innerHTML = `
@@ -1546,22 +1679,28 @@ function filteredReportEntries() {
 }
 
 function renderManagement() {
-  const state = $("reportStateFilter").value;
-  const debtors = data.debtors.filter((d) => !state || displayState(d) === state);
+  const debtors = filteredManagementDebtors();
   const entries = filteredReportEntries();
   const resultCounts = countBy(entries, "result");
   const channelCounts = countBy(entries, "channel");
   const managedDebtorIds = new Set(entries.map((entry) => entry.debtorId));
   const receipts = store.files.filter((file) => file.category === "comprobante");
-  const offerRows = Object.values(store.agreements);
+  const filteredDebtorIds = new Set(debtors.map((debtor) => debtor.id));
+  const offerRows = Object.values(store.agreements).filter((offer) => filteredDebtorIds.has(offer.debtorId));
   const offerTotal = offerRows.reduce((sum, offer) => sum + offer.amount, 0);
   const offerCapital = offerRows.reduce((sum, offer) => {
     const debtor = data.debtors.find((item) => item.id === offer.debtorId);
     return sum + (debtor?.saldoCapital || 0);
   }, 0);
   const lostCapital = Math.max(0, offerCapital - offerTotal);
-  const managedRate = debtors.length ? Math.round((managedDebtorIds.size / debtors.length) * 100) : 0;
-  const collected = store.files.filter((file) => file.category === "comprobante" && file.status === "validado").reduce((sum, file) => sum + (file.amount || 0), 0);
+  const managedFilteredCount = debtors.filter((debtor) => managedDebtorIds.has(debtor.id)).length;
+  const managedRate = debtors.length ? Math.round((managedFilteredCount / debtors.length) * 100) : 0;
+  const collected = store.files.filter((file) => file.category === "comprobante" && file.status === "validado").reduce((sum, file) => sum + (file.amount || 0), 0)
+    + allBankRows().filter((row) => ["validado", "conciliado"].includes(row.status)).reduce((sum, row) => sum + Number(row.monto || 0), 0);
+  const agreementBalance = offerRows.reduce((sum, offer) => {
+    const debtor = data.debtors.find((item) => item.id === offer.debtorId);
+    return sum + (debtor ? agreementRemainingAmount(debtor, offer) : 0);
+  }, 0);
 
   setText("kpiTotal", fmtNum.format(debtors.length));
   setText("kpiCapital", fmtMoney.format(debtors.reduce((sum, d) => sum + d.saldoCapital, 0)));
@@ -1571,6 +1710,8 @@ function renderManagement() {
   setText("kpiEntries", fmtNum.format(entries.length));
   setText("kpiManagedRate", `${managedRate}%`);
   setText("kpiReceipts", fmtNum.format(receipts.length));
+  setText("kpiActiveAgreements", fmtNum.format(offerRows.length));
+  setText("kpiAgreementBalance", fmtMoney.format(agreementBalance));
   setText("generatedAt", `base ${new Date(data.generatedAt).toLocaleString("es-CL")}`);
   setText("withPhone", fmtNum.format(debtors.filter((d) => d.telefonos.length).length));
   setText("withEmail", fmtNum.format(debtors.filter((d) => d.correos.length).length));
@@ -1581,12 +1722,12 @@ function renderManagement() {
   renderBars("channelBars", Object.entries(channelCounts).sort((a, b) => b[1] - a[1]));
   renderBars("funnelBars", [
     ["Cartera total", debtors.length],
-    ["Con gestión", managedDebtorIds.size],
+    ["Con gestión", managedFilteredCount],
     ["Ofertas registradas", offerRows.length],
     ["Comprobantes", receipts.length],
   ]);
   renderBars("topDebtBars", debtors.slice().sort((a, b) => b.deudaTotal - a.deudaTotal).slice(0, 8).map((d) => [d.nombreTitular || d.rutTitular, d.deudaTotal]), fmtMoney.format);
-  renderBars("bankSourceBars", data.summary.cartola.porFuente, fmtMoney.format);
+  renderBars("bankSourceBars", bankSourcePairs(), fmtMoney.format);
   renderContactDonut(debtors);
   renderCriticalIndicators(debtors, entries, offerRows, receipts, lostCapital);
 }
@@ -1599,6 +1740,8 @@ function renderAgreementRegistry() {
   const from = $("agreementFrom").value;
   const to = $("agreementTo").value;
   const state = $("agreementStateFilter").value;
+  const head = $("agreementRows")?.closest("table")?.querySelector("thead");
+  if (head) head.innerHTML = `<tr><th>Fecha</th><th>Tipo</th><th>Deudor</th><th>Alumno</th><th>Monto</th><th>Pie</th><th>Saldo</th><th>Rut paga</th><th>Archivos</th><th>Cartola</th><th>Proximo pago</th><th>Estado</th></tr>`;
   const rows = Object.values(store.agreements)
     .map((agreement) => ({ agreement, debtor: data.debtors.find((item) => item.id === agreement.debtorId) }))
     .filter((row) => row.debtor)
@@ -1612,10 +1755,23 @@ function renderAgreementRegistry() {
       <td><strong>${debtor.nombreTitular || ""}</strong><br><span class="muted">${debtor.rutTitular || debtor.rutDeudor}</span></td>
       <td><strong>${debtor.nombreAlumno || ""}</strong><br><span class="muted">${debtor.rutAlumno || ""}</span></td>
       <td>${fmtMoney.format(agreement.amount)}</td>
+      ${agreementRegistryExtraCells(agreement, debtor)}
       <td>${nextPaymentDate(agreement) || "Sin fecha"}</td>
       <td>${statusPill(debtor)}</td>
     </tr>
-  `).join("") : `<tr><td colspan="7">Sin convenios para los filtros seleccionados.</td></tr>`;
+  `).join("") : `<tr><td colspan="12">Sin convenios para los filtros seleccionados.</td></tr>`;
+}
+
+function agreementRegistryExtraCells(agreement, debtor) {
+  const files = store.files.filter((file) => file.debtorId === debtor.id && file.category === "comprobante");
+  const bankMatches = allBankRows().filter((row) => bankRowMatchesDebtor(row, debtor));
+  return `
+    <td>${agreement.type === "cuotas" ? fmtMoney.format(agreement.downPayment || 0) : "-"}</td>
+    <td>${fmtMoney.format(agreementRemainingAmount(debtor, agreement))}</td>
+    <td>${agreement.payerRut || "-"}</td>
+    <td>${files.length ? `${files.length} archivo(s)` : "Sin archivos"}</td>
+    <td>${bankMatches.length ? `${bankMatches.length} match` : "Sin match"}</td>
+  `;
 }
 
 function renderContactDonut(debtors) {
@@ -1660,17 +1816,149 @@ function countBy(rows, key) {
   }, {});
 }
 
+function bankSourcePairs() {
+  const rows = allBankRows();
+  if (!rows.length) return data.summary.cartola.porFuente || [];
+  const totals = rows.reduce((acc, row) => {
+    const key = row.source || row.fuente || "Sin fuente";
+    acc[key] = (acc[key] || 0) + Number(row.monto || 0);
+    return acc;
+  }, {});
+  return Object.entries(totals).sort((a, b) => b[1] - a[1]);
+}
+
+function normalizeHeader(value) {
+  return normalizeText(value).replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+function rowValue(row, aliases) {
+  const wanted = aliases.map(normalizeHeader);
+  for (const [key, value] of Object.entries(row || {})) {
+    if (wanted.includes(normalizeHeader(key))) return value;
+  }
+  return "";
+}
+
+function bankDate(value) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10);
+  if (typeof value === "number" && window.XLSX?.SSF) {
+    const parsed = window.XLSX.SSF.parse_date_code(value);
+    if (parsed) return `${parsed.y}-${String(parsed.m).padStart(2, "0")}-${String(parsed.d).padStart(2, "0")}`;
+  }
+  const raw = String(value || "").trim();
+  const match = raw.match(/(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})/);
+  if (!match) return raw.slice(0, 10);
+  const year = match[3].length === 2 ? `20${match[3]}` : match[3];
+  return `${year}-${match[2].padStart(2, "0")}-${match[1].padStart(2, "0")}`;
+}
+
+function bankRowFromRaw(row, source, fileRecord) {
+  const monto = parseMoney(rowValue(row, ["Ingreso (+)", "ingreso", "monto", "abono", "haber", "valor"]));
+  const rut = String(rowValue(row, ["RUT", "rut pagador", "rut cliente"]) || "").trim();
+  const nombre = String(rowValue(row, ["Nombre", "nombre pagador", "cliente", "deudor"]) || "").trim();
+  const glosa = String(rowValue(row, ["Glosa detalle", "Comentario transferencia", "glosa", "descripcion", "detalle"]) || "").trim();
+  if (!monto && !rut && !nombre && !glosa) return null;
+  return {
+    id: `${fileRecord.id}-${source}-${Math.random().toString(16).slice(2)}`,
+    fileId: fileRecord.id,
+    fileName: fileRecord.name,
+    source,
+    fecha: bankDate(rowValue(row, ["Fecha de transacción", "Fecha contable", "fecha", "fecha movimiento"])),
+    nombre,
+    rut,
+    monto,
+    glosa,
+    associatedRut: "",
+    payerRut: rut,
+    status: rut ? "pendiente" : "revision",
+    notes: "",
+    createdAt: new Date().toISOString(),
+  };
+}
+
+async function parseBankRows(file, fileRecord) {
+  const ext = file.name.toLowerCase().split(".").pop();
+  if (["xlsx", "xls"].includes(ext || "")) {
+    if (!window.XLSX) throw new Error("No se pudo cargar el lector XLSX. Reintente o suba CSV.");
+    const workbook = window.XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
+    return workbook.SheetNames.flatMap((sheetName) => {
+      const rows = window.XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: "" });
+      return rows.map((row) => bankRowFromRaw(row, sheetName, fileRecord)).filter(Boolean);
+    });
+  }
+  if (window.XLSX) {
+    const workbook = window.XLSX.read(await file.text(), { type: "string" });
+    return workbook.SheetNames.flatMap((sheetName) => {
+      const rows = window.XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: "" });
+      return rows.map((row) => bankRowFromRaw(row, sheetName, fileRecord)).filter(Boolean);
+    });
+  }
+  return [];
+}
+
+function allBankRows() {
+  const remote = (data.bankMovements || []).map((row, index) => ({
+    id: `remote-${index}`,
+    source: row.fuente || row.source || "base",
+    fecha: row.fecha || row.date || "",
+    nombre: row.nombre || "",
+    rut: row.rut || "",
+    monto: Number(row.monto || 0),
+    glosa: row.glosa || "",
+    associatedRut: row.associatedRut || "",
+    payerRut: row.payerRut || row.rut || "",
+    status: row.status || "pendiente",
+    notes: row.notes || "",
+  }));
+  return [...store.bankRows, ...remote];
+}
+
+function bankRowMatchesDebtor(row, debtor) {
+  const agreement = getOffer(debtor);
+  const validRuts = [debtor.rutTitular, debtor.rutAlumno, debtor.rutDeudor, agreement?.payerRut].map(normalizeRut).filter(Boolean);
+  return [row.associatedRut, row.payerRut, row.rut].map(normalizeRut).some((rut) => rut && validRuts.includes(rut));
+}
+
 async function saveBankStatement(event) {
   event.preventDefault();
   const file = $("bankStatementFile").files[0];
   if (!file) return;
   const record = await saveFileRecord(file, { source: "jefatura", category: "cartola", debtorId: null, debtorName: "Cartola bancaria" });
+  let parsedRows = [];
+  try {
+    parsedRows = await parseBankRows(file, record);
+    store.bankRows.unshift(...parsedRows);
+    writeJson("abg_bank_rows", store.bankRows);
+  } catch (error) {
+    $("bankUploadStatus").innerHTML = `<div class="history-item file"><strong>${record.name}</strong><br>Cartola guardada, pero no se pudo leer: ${escapeHtml(error.message)}</div>`;
+    renderFileRepository();
+    return;
+  }
   $("bankUploadForm").reset();
-  $("bankUploadStatus").innerHTML = `<div class="history-item file"><strong>${record.name}</strong><br>Cartola guardada para conciliación manual/local.</div>`;
+  $("bankUploadStatus").innerHTML = `<div class="history-item file"><strong>${record.name}</strong><br>Cartola guardada. Movimientos leidos: ${fmtNum.format(parsedRows.length)}.</div>`;
   renderFileRepository();
+  renderBankRows();
 }
 
 function renderBankRows() {
+  const rows = allBankRows();
+  $("bankRows").innerHTML = rows.length ? rows.map((m) => {
+    const state = m.status || (m.rut ? "pendiente" : "revision");
+    return `
+      <tr data-bank-row="${escapeAttr(m.id)}">
+        <td>${m.fecha || ""}</td>
+        <td>${m.source || m.fuente || ""}<br><span class="muted">${m.fileName || ""}</span></td>
+        <td><strong>${m.nombre || "Sin nombre"}</strong><br><span class="muted">${m.rut || "RUT no informado"}</span></td>
+        <td>${fmtMoney.format(m.monto || 0)}</td>
+        <td>${m.glosa || ""}</td>
+        <td><input data-bank-associated value="${escapeAttr(m.associatedRut || "")}" placeholder="RUT deudor"></td>
+        <td><select data-bank-status><option value="pendiente" ${state === "pendiente" ? "selected" : ""}>Pendiente</option><option value="validado" ${state === "validado" ? "selected" : ""}>Validado</option><option value="revision" ${state === "revision" ? "selected" : ""}>Revision</option><option value="rechazado" ${state === "rechazado" ? "selected" : ""}>Rechazado</option></select></td>
+        <td><button type="button" data-save-bank-row="${escapeAttr(m.id)}">Guardar</button></td>
+      </tr>
+    `;
+  }).join("") : `<tr><td colspan="8">Sin cartolas cargadas. Suba una cartola desde dashboard jefatura.</td></tr>`;
+  document.querySelectorAll("[data-save-bank-row]").forEach((btn) => btn.addEventListener("click", saveBankRowEdit));
+  return;
   $("bankRows").innerHTML = data.bankMovements.map((m) => {
     const state = m.rut ? "Match probable" : "Revisión manual";
     return `
@@ -1686,9 +1974,64 @@ function renderBankRows() {
   }).join("");
 }
 
+function saveBankRowEdit(event) {
+  const id = event.currentTarget.dataset.saveBankRow;
+  const row = store.bankRows.find((item) => item.id === id);
+  if (!row) return;
+  const tr = event.currentTarget.closest("tr");
+  row.associatedRut = tr.querySelector("[data-bank-associated]")?.value.trim() || "";
+  row.status = tr.querySelector("[data-bank-status]")?.value || "pendiente";
+  writeJson("abg_bank_rows", store.bankRows);
+  renderBankRows();
+  renderManagement();
+}
+
+function debtorById(id) {
+  return data.debtors.find((debtor) => debtor.id === id) || null;
+}
+
+function renderValidationQueue() {
+  const rows = store.files
+    .filter((file) => file.category === "comprobante")
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  $("validationRows").innerHTML = rows.length ? rows.map((file) => {
+    const debtor = debtorById(file.debtorId);
+    return `
+      <tr class="validation-row" data-file-id="${escapeAttr(file.id)}">
+        <td>${new Date(file.createdAt).toLocaleDateString("es-CL")}</td>
+        <td><strong>${escapeHtml(file.debtorName || debtor?.nombreTitular || "Sin deudor")}</strong><br><span class="muted">${escapeHtml(debtor?.rutTitular || debtor?.rutDeudor || "")}</span></td>
+        <td>${escapeHtml(file.name)}<br><span class="muted">${escapeHtml(file.source || "")}</span></td>
+        <td><input data-validation-amount inputmode="numeric" value="${file.amount ? fmtMoney.format(file.amount) : ""}" placeholder="$0"></td>
+        <td><input data-validation-payer value="${escapeAttr(file.payerRut || "")}" placeholder="RUT pagador"></td>
+        <td><select data-validation-status><option value="pendiente" ${!file.status || file.status === "pendiente" ? "selected" : ""}>Pendiente</option><option value="validado" ${file.status === "validado" ? "selected" : ""}>Validado</option><option value="rechazado" ${file.status === "rechazado" ? "selected" : ""}>Rechazado</option></select></td>
+        <td><input data-validation-note value="${escapeAttr(file.validationNote || "")}" placeholder="Nota"></td>
+        <td><button type="button" data-save-validation="${escapeAttr(file.id)}">Guardar</button></td>
+      </tr>
+    `;
+  }).join("") : `<tr><td colspan="8">Sin comprobantes para validar.</td></tr>`;
+  document.querySelectorAll("[data-save-validation]").forEach((btn) => btn.addEventListener("click", saveValidationEdit));
+}
+
+function saveValidationEdit(event) {
+  const id = event.currentTarget.dataset.saveValidation;
+  const file = store.files.find((item) => item.id === id);
+  if (!file) return;
+  const tr = event.currentTarget.closest("tr");
+  file.amount = parseMoney(tr.querySelector("[data-validation-amount]")?.value || "");
+  file.payerRut = tr.querySelector("[data-validation-payer]")?.value.trim() || "";
+  file.status = tr.querySelector("[data-validation-status]")?.value || "pendiente";
+  file.validationNote = tr.querySelector("[data-validation-note]")?.value.trim() || "";
+  file.validatedAt = new Date().toISOString();
+  writeJson("abg_files", store.files);
+  renderValidationQueue();
+  renderManagement();
+  if (selectedDebtor) renderExecutiveDetail();
+}
+
 function renderFileRepository() {
   let files = store.files;
   if (session?.role === "deudor") files = files.filter((file) => file.debtorId === session.debtorId);
+  files = files.slice().sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   if (!files.length) {
     $("fileRepository").innerHTML = `<div class="detail-empty">Sin archivos guardados en este navegador.</div>`;
     return;
@@ -1731,15 +2074,29 @@ function bindEvents() {
   $("execStateFilter").addEventListener("input", renderExecutiveRows);
   $("execContactFilter").addEventListener("input", renderExecutiveRows);
   $("execRecentFilter").addEventListener("input", renderExecutiveRows);
+  $("execAgreementFilter").addEventListener("input", renderExecutiveRows);
+  $("execAssignmentFilter").addEventListener("input", renderExecutiveRows);
+  $("execDebtMin").addEventListener("input", renderExecutiveRows);
+  $("execDebtMax").addEventListener("input", renderExecutiveRows);
   $("execNoManagementDays").addEventListener("input", renderExecutiveRows);
   $("execManagementExactDate").addEventListener("input", renderExecutiveRows);
   $("execManagementFrom").addEventListener("input", renderExecutiveRows);
   $("execManagementTo").addEventListener("input", renderExecutiveRows);
   $("clearCampaignExcluded").addEventListener("click", clearCampaignExcluded);
+  $("toggleCampaignPanel").addEventListener("click", () => {
+    const body = $("campaignBody");
+    body.hidden = !body.hidden;
+    $("campaignPanel").classList.toggle("collapsed", body.hidden);
+    $("toggleCampaignPanel").textContent = body.hidden ? "Mostrar" : "Ocultar";
+  });
   $("clearExecFilters").addEventListener("click", () => {
     $("execStateFilter").value = "";
     $("execContactFilter").value = "";
     $("execRecentFilter").value = "";
+    $("execAgreementFilter").value = "";
+    $("execAssignmentFilter").value = "";
+    $("execDebtMin").value = "";
+    $("execDebtMax").value = "";
     $("execNoManagementDays").value = "";
     $("execManagementExactDate").value = "";
     $("execManagementFrom").value = "";
@@ -1763,25 +2120,32 @@ function bindEvents() {
   $("whatsappLocalMode").addEventListener("change", (event) => {
     localStorage.setItem("abg_whatsapp_local_mode", event.currentTarget.checked ? "1" : "0");
   });
-  ["campaignDebtMin", "campaignDebtMax"].forEach((id) => $(id).addEventListener("blur", (event) => {
+  ["campaignDebtMin", "campaignDebtMax", "execDebtMin", "execDebtMax", "reportDebtMin", "reportDebtMax"].forEach((id) => $(id).addEventListener("blur", (event) => {
     const amount = parseMoney(event.currentTarget.value);
     event.currentTarget.value = amount ? fmtMoney.format(amount) : "";
+    if (id.startsWith("exec")) renderExecutiveRows();
+    if (id.startsWith("report")) renderManagement();
   }));
   $("debtorUploadForm").addEventListener("submit", saveDebtorReceipt);
   $("bankUploadForm").addEventListener("submit", saveBankStatement);
   $("closeAgreementModal").addEventListener("click", closeAgreementModal);
   $("agreementForm").addEventListener("submit", saveAgreement);
-  ["agreementType", "agreementInstallments", "agreementStartDate"].forEach((id) => $(id).addEventListener("input", renderAgreementCalendar));
-  $("agreementAmount").addEventListener("blur", (event) => {
+  ["agreementType", "agreementInstallments", "agreementStartDate", "agreementAmount", "agreementDownPayment"].forEach((id) => $(id).addEventListener("input", renderAgreementCalendar));
+  ["agreementAmount", "agreementDownPayment"].forEach((id) => $(id).addEventListener("blur", (event) => {
     const amount = parseMoney(event.currentTarget.value);
     event.currentTarget.value = amount ? fmtMoney.format(amount) : "";
-  });
-  ["reportFrom", "reportTo", "reportStateFilter"].forEach((id) => $(id).addEventListener("input", renderManagement));
+    renderAgreementCalendar();
+  }));
+  ["reportFrom", "reportTo", "reportStateFilter", "reportAgreementFilter", "reportAssignmentFilter", "reportDebtMin", "reportDebtMax"].forEach((id) => $(id).addEventListener("input", renderManagement));
   ["agreementFrom", "agreementTo", "agreementStateFilter"].forEach((id) => $(id).addEventListener("input", renderAgreementRegistry));
   $("clearReportFilters").addEventListener("click", () => {
     $("reportFrom").value = "";
     $("reportTo").value = "";
     $("reportStateFilter").value = "";
+    $("reportAgreementFilter").value = "";
+    $("reportAssignmentFilter").value = "";
+    $("reportDebtMin").value = "";
+    $("reportDebtMax").value = "";
     renderManagement();
   });
   $("clearAgreementFilters").addEventListener("click", () => {

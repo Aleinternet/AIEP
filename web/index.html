@@ -118,6 +118,20 @@
                 <option value="none3">Sin gestion ultimos 3 dias</option>
                 <option value="never">Sin gestion registrada</option>
               </select>
+              <select id="execAgreementFilter">
+                <option value="">Todo convenio</option>
+                <option value="with">Con convenio</option>
+                <option value="without">Sin convenio</option>
+                <option value="liquidacion">Liquidacion total</option>
+                <option value="cuotas">Pago en cuotas</option>
+              </select>
+              <select id="execAssignmentFilter"><option value="">Toda asignacion</option></select>
+              <label>Deuda desde
+                <input id="execDebtMin" inputmode="numeric" placeholder="$0">
+              </label>
+              <label>Deuda hasta
+                <input id="execDebtMax" inputmode="numeric" placeholder="Sin tope">
+              </label>
               <label>Dias sin gestion
                 <input id="execNoManagementDays" type="number" min="0" placeholder="Ej: 7">
               </label>
@@ -133,15 +147,18 @@
               <button id="clearExecFilters" type="button">Limpiar filtros</button>
               <button id="clearCampaignExcluded" type="button">Limpiar X</button>
             </div>
-            <section class="campaign-panel">
+            <section class="campaign-panel collapsed" id="campaignPanel">
               <div class="campaign-head">
                 <div>
                   <h3>Envios masivos</h3>
                   <span id="campaignStatus">Sin campana activa</span>
                 </div>
-                <button id="stopCampaign" type="button" class="danger-soft">Detener</button>
+                <div class="campaign-head-actions">
+                  <button id="toggleCampaignPanel" type="button" class="mail-action">Mostrar</button>
+                  <button id="stopCampaign" type="button" class="danger-soft">Detener</button>
+                </div>
               </div>
-              <div class="campaign-grid">
+              <div class="campaign-grid" id="campaignBody" hidden>
                 <label>Cantidad
                   <input id="campaignLimit" type="number" min="1" max="300" value="20">
                 </label>
@@ -218,11 +235,17 @@
             <label>Monto total convenio
               <input id="agreementAmount" name="amount" inputmode="numeric" placeholder="$0" required>
             </label>
+            <label id="downPaymentLabel">Pie de pago
+              <input id="agreementDownPayment" name="downPayment" inputmode="numeric" placeholder="$0">
+            </label>
             <label id="installmentsLabel">Cantidad de cuotas
               <input id="agreementInstallments" name="installments" type="number" min="1" max="36" value="1">
             </label>
             <label>Fecha inicio de pago
               <input id="agreementStartDate" name="startDate" type="date" required>
+            </label>
+            <label>RUT que paga (opcional)
+              <input id="agreementPayerRut" name="payerRut" placeholder="Ej: 12.345.678-9">
             </label>
             <label class="wide">Observaciones
               <textarea id="agreementNotes" name="notes" rows="4" placeholder="Observaciones del convenio"></textarea>
@@ -243,11 +266,23 @@
           <article class="kpi"><span>Gestiones</span><strong id="kpiEntries">0</strong><small>registros en bitácora</small></article>
           <article class="kpi"><span>Tasa gestión</span><strong id="kpiManagedRate">0%</strong><small>cartera con bitácora</small></article>
           <article class="kpi"><span>Comprobantes</span><strong id="kpiReceipts">0</strong><small>subidos localmente</small></article>
+          <article class="kpi"><span>Convenios activos</span><strong id="kpiActiveAgreements">0</strong><small>vigentes filtrados</small></article>
+          <article class="kpi"><span>Saldo convenio</span><strong id="kpiAgreementBalance">$0</strong><small>pendiente estimado</small></article>
         </div>
         <div class="toolbar">
           <label>Desde<input type="date" id="reportFrom"></label>
           <label>Hasta<input type="date" id="reportTo"></label>
           <select id="reportStateFilter"><option value="">Todos los estados</option></select>
+          <select id="reportAgreementFilter">
+            <option value="">Todo convenio</option>
+            <option value="with">Con convenio</option>
+            <option value="without">Sin convenio</option>
+            <option value="liquidacion">Liquidacion total</option>
+            <option value="cuotas">Pago en cuotas</option>
+          </select>
+          <select id="reportAssignmentFilter"><option value="">Toda asignacion</option></select>
+          <label>Deuda desde<input id="reportDebtMin" inputmode="numeric" placeholder="$0"></label>
+          <label>Deuda hasta<input id="reportDebtMax" inputmode="numeric" placeholder="Sin tope"></label>
           <button id="clearReportFilters">Limpiar filtros</button>
         </div>
         <div class="dashboard-grid">
@@ -312,8 +347,20 @@
           <div class="panel-head"><h2>Bandeja de conciliación</h2><span>cartola base y archivos subidos</span></div>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Fecha</th><th>Fuente</th><th>Nombre/RUT</th><th>Monto</th><th>Glosa</th><th>Estado sugerido</th></tr></thead>
+              <thead><tr><th>Fecha</th><th>Fuente</th><th>Nombre/RUT</th><th>Monto</th><th>Glosa</th><th>RUT asociado</th><th>Estado</th><th>Accion</th></tr></thead>
               <tbody id="bankRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="executiveValidation">
+        <div class="panel">
+          <div class="panel-head"><h2>Validacion de pagos</h2><span>comprobantes y cartolas</span></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Fecha</th><th>Deudor</th><th>Archivo</th><th>Monto</th><th>RUT que paga</th><th>Estado</th><th>Nota</th><th>Accion</th></tr></thead>
+              <tbody id="validationRows"></tbody>
             </table>
           </div>
         </div>
@@ -345,7 +392,8 @@
       </section>
     </main>
 
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="data/app-data.js?v=20260514-2"></script>
-    <script src="assets/js/app.js?v=20260519-6"></script>
+    <script src="assets/js/app.js?v=20260528-1"></script>
   </body>
 </html>

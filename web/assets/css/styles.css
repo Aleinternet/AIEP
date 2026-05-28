@@ -74,7 +74,7 @@ h3 { margin: 18px 0 10px; font-size: 15px; }
 .kpi span, .kpi small { color: var(--muted); font-size: 13px; }
 .kpi strong { font-size: 25px; line-height: 1.1; }
 .dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-.workbench { display: grid; grid-template-columns: minmax(0, 1fr) minmax(430px, 520px); gap: 14px; align-items: stretch; height: calc(100vh - 140px); min-height: 620px; overflow: hidden; }
+.workbench { display: grid; grid-template-columns: minmax(0, 1fr) minmax(430px, 520px); gap: 14px; align-items: stretch; height: calc(100vh - 112px); min-height: 0; overflow: hidden; }
 .workbench > .panel { overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
 .workbench .table-wrap { flex: 1; min-height: 0; }
 .side-panel { position: relative; top: 0; max-height: none; overflow: hidden !important; z-index: 0; }
@@ -95,6 +95,9 @@ textarea { resize: vertical; }
 .campaign-head { display: flex; justify-content: space-between; gap: 12px; align-items: start; margin-bottom: 10px; }
 .campaign-head h3 { margin: 0 0 4px; }
 .campaign-head span { color: var(--muted); font-size: 13px; }
+.campaign-head-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.campaign-panel.collapsed { padding-bottom: 8px; }
+.campaign-panel.collapsed .campaign-head { margin-bottom: 0; }
 .campaign-grid { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)) auto; gap: 10px; align-items: end; }
 .campaign-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .helper-toggle { display: flex; align-items: center; gap: 8px; align-self: center; color: var(--ink); }
@@ -281,6 +284,11 @@ td small { display: block; color: var(--muted); margin-top: 4px; }
 .file-list { display: grid; gap: 10px; }
 .file-row { display: flex; justify-content: space-between; gap: 16px; padding: 12px; border: 1px solid var(--line); border-radius: 6px; background: #fbfdff; }
 .file-row strong, .file-row span { display: block; }
+.bank-edit-grid { display: grid; grid-template-columns: minmax(100px, 130px) minmax(120px, 150px) minmax(120px, 160px) auto; gap: 8px; align-items: end; }
+.bank-edit-grid input, .bank-edit-grid select, .validation-row input, .validation-row select { width: 100%; border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+.validation-row td { vertical-align: middle; }
+.legal-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
+.legal-grid .detail-item.wide { grid-column: 1 / -1; }
 
 @media (max-width: 1100px) {
   body { overflow: auto; }
@@ -290,6 +298,8 @@ td small { display: block; color: var(--muted); margin-top: 4px; }
   .sidebar { position: relative; min-height: auto; }
   .nav { grid-template-columns: repeat(2, 1fr); }
   .topbar, .workbench, .portal-shell, .debtor-page { display: grid; grid-template-columns: 1fr; }
+  .workbench { height: auto; min-height: 0; overflow: visible; }
+  .workbench > .panel { min-height: 520px; }
   .campaign-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .campaign-actions { grid-column: 1 / -1; }
   .side-panel { position: relative; top: 0; max-height: 80vh; }
@@ -298,6 +308,15 @@ td small { display: block; color: var(--muted); margin-top: 4px; }
 
 @media (max-width: 620px) {
   .app { padding: 18px; }
-  .nav, .form-grid, .form-grid.stacked, .debtor-grid, .contact-score, .campaign-grid, .contact-meta { grid-template-columns: 1fr; }
+  .nav, .form-grid, .form-grid.stacked, .debtor-grid, .contact-score, .campaign-grid, .contact-meta, .legal-grid, .bank-edit-grid { grid-template-columns: 1fr; }
   .bar-row, .file-row { grid-template-columns: 1fr; display: grid; }
+}
+
+@media (max-height: 760px) and (min-width: 1101px) {
+  .app { padding: 20px 28px; }
+  .topbar { margin-bottom: 14px; }
+  .panel, .portal-card, .payment-box { padding: 14px; }
+  .toolbar { gap: 8px; margin-bottom: 10px; }
+  .toolbar label { max-width: 165px; }
+  th, td { padding: 9px 11px; }
 }

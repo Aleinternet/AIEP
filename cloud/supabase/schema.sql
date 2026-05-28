@@ -23,6 +23,8 @@ create table if not exists profiles (
 
 create table if not exists debtors (
   id text primary key,
+  rut_deudor text,
+  rut_deudor_normalizado text,
   rut_titular text not null,
   rut_titular_normalizado text not null,
   nombre_titular text not null,
@@ -37,6 +39,17 @@ create table if not exists debtors (
   direccion text,
   rol text,
   tribunal text,
+  procedimiento text,
+  usuario text,
+  equipo text,
+  asignacion text,
+  fecha_emision date,
+  atraso_gestion text,
+  tipo_contacto text,
+  resultado text,
+  observacion text,
+  ubicabilidad text,
+  tel_validado text,
   saldo_capital bigint not null default 0,
   intereses_mora bigint not null default 0,
   gastos_cobranza bigint not null default 0,
@@ -50,8 +63,10 @@ create table if not exists debtors (
 
 create index if not exists debtors_rut_titular_idx on debtors (rut_titular_normalizado);
 create index if not exists debtors_rut_alumno_idx on debtors (rut_alumno_normalizado);
+create index if not exists debtors_rut_deudor_idx on debtors (rut_deudor_normalizado);
 create index if not exists debtors_deuda_total_idx on debtors (deuda_total desc);
 create index if not exists debtors_estado_idx on debtors (estado);
+create index if not exists debtors_asignacion_idx on debtors (asignacion);
 
 create table if not exists contacts (
   id uuid primary key default gen_random_uuid(),

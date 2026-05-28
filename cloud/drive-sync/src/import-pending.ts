@@ -43,6 +43,16 @@ function money(value: unknown) {
   return Number.parseInt(cleaned || "0", 10);
 }
 
+function dateText(value: unknown) {
+  if (!value) return null;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10);
+  const raw = text(value);
+  const match = raw.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})$/);
+  if (!match) return raw || null;
+  const year = match[3].length === 2 ? `20${match[3]}` : match[3];
+  return `${year}-${match[2].padStart(2, "0")}-${match[1].padStart(2, "0")}`;
+}
+
 function normalizeHeader(value: string) {
   return String(value)
     .normalize("NFD")
@@ -62,7 +72,8 @@ function findValue(row: RawRow, aliases: string[]) {
 }
 
 function mapDebtor(row: RawRow) {
-  const rutTitular = text(findValue(row, ["rut titular", "rut_titular", "rut deudor", "rut_deudor"]));
+  const rutDeudor = text(findValue(row, ["rut deudor", "rut_deudor", "rut cliente", "rut_cliente"]));
+  const rutTitular = text(findValue(row, ["rut titular", "rut_titular"])) || rutDeudor;
   const rutAlumno = text(findValue(row, ["rut alumno", "rut_alumno", "rut estudiante", "rut_estudiante"]));
   const id = text(findValue(row, ["id", "id rem", "id_rem", "codigo", "operacion", "remesa"]))
     || `AIEP ${normalizeRut(rutTitular)} ${normalizeRut(rutAlumno)}`;
@@ -73,6 +84,8 @@ function mapDebtor(row: RawRow) {
 
   return {
     id,
+    rut_deudor: rutDeudor || rutTitular,
+    rut_deudor_normalizado: normalizeRut(rutDeudor || rutTitular),
     rut_titular: rutTitular,
     rut_titular_normalizado: normalizeRut(rutTitular),
     nombre_titular: text(findValue(row, [
@@ -101,6 +114,17 @@ function mapDebtor(row: RawRow) {
     direccion: text(findValue(row, ["direccion"])),
     rol: text(findValue(row, ["rol"])),
     tribunal: text(findValue(row, ["tribunal"])),
+    procedimiento: text(findValue(row, ["procedimiento", "escrito de la demanda", "escrito_de_la_demanda"])) || (text(findValue(row, ["rol"])) || text(findValue(row, ["tribunal"])) ? "Procedimiento (CIVIL)" : ""),
+    usuario: text(findValue(row, ["usuario", "ejecutivo"])),
+    equipo: text(findValue(row, ["equipo"])),
+    asignacion: text(findValue(row, ["asignacion", "asignación"])),
+    fecha_emision: dateText(findValue(row, ["fecha emision", "fecha_emision"])),
+    atraso_gestion: text(findValue(row, ["atraso gestion", "atraso_gestion"])),
+    tipo_contacto: text(findValue(row, ["tipo contacto", "tipo_contacto"])),
+    resultado: text(findValue(row, ["resultado"])),
+    observacion: text(findValue(row, ["observacion", "observación"])),
+    ubicabilidad: text(findValue(row, ["ubicabilidad"])),
+    tel_validado: text(findValue(row, ["tel validado", "tel_validado"])),
     saldo_capital: saldoCapital,
     intereses_mora: interesesMora,
     gastos_cobranza: gastosCobranza,
