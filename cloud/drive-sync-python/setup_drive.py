@@ -81,19 +81,25 @@ INITIAL_UPLOADS = [
 
 
 def drive_service():
+    auth_mode = os.getenv("GOOGLE_AUTH_MODE", "").strip().lower()
     oauth_client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
     oauth_client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET")
     oauth_refresh_token = os.getenv("GOOGLE_OAUTH_REFRESH_TOKEN")
     service_account_email = os.getenv("GOOGLE_SERVICE_ACCOUNT_EMAIL") or "aiep-drive@aiep-496715.iam.gserviceaccount.com"
     service_account_private_key = os.getenv("GOOGLE_PRIVATE_KEY")
 
-    if TOKEN_FILE.exists() and not (oauth_client_id and oauth_client_secret and oauth_refresh_token):
+    if auth_mode == "service_account":
+        oauth_client_id = ""
+        oauth_client_secret = ""
+        oauth_refresh_token = ""
+
+    if TOKEN_FILE.exists() and auth_mode != "service_account" and not (oauth_client_id and oauth_client_secret and oauth_refresh_token):
         token_data = json.loads(TOKEN_FILE.read_text(encoding="utf-8"))
         oauth_client_id = token_data.get("client_id")
         oauth_client_secret = token_data.get("client_secret")
         oauth_refresh_token = token_data.get("refresh_token")
 
-    if oauth_client_id and oauth_client_secret and oauth_refresh_token:
+    if auth_mode != "service_account" and oauth_client_id and oauth_client_secret and oauth_refresh_token:
         credentials = Credentials(
             token=None,
             refresh_token=oauth_refresh_token,

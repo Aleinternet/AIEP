@@ -84,11 +84,39 @@ jobs:
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
         run: |
           python - <<'PY'
+          import os
           import sys
+          from google.auth.exceptions import RefreshError
           sys.path.insert(0, "cloud/drive-sync-python")
           from setup_drive import drive_service, ROOT_FOLDER_ID
-          service = drive_service()
-          service.files().get(fileId=ROOT_FOLDER_ID, fields="id,name", supportsAllDrives=True).execute()
+
+          def test_drive():
+              service = drive_service()
+              return service.files().get(fileId=ROOT_FOLDER_ID, fields="id,name", supportsAllDrives=True).execute()
+
+          try:
+              folder = test_drive()
+              print(f"OK Drive con OAuth/cuenta configurada: {folder['name']} ({folder['id']})")
+          except RefreshError as exc:
+              if "invalid_grant" not in str(exc):
+                  raise
+              if not os.getenv("GOOGLE_PRIVATE_KEY"):
+                  raise RuntimeError(
+                      "El GOOGLE_OAUTH_REFRESH_TOKEN esta vencido o revocado y no hay GOOGLE_PRIVATE_KEY para usar cuenta de servicio."
+                  ) from exc
+              print("::warning::GOOGLE_OAUTH_REFRESH_TOKEN vencido/revocado. Probando cuenta de servicio.")
+              os.environ["GOOGLE_AUTH_MODE"] = "service_account"
+              try:
+                  folder = test_drive()
+              except Exception as service_exc:
+                  raise RuntimeError(
+                      "OAuth fallo por invalid_grant y la cuenta de servicio tampoco pudo acceder. "
+                      "Comparte la carpeta AIEP con aiep-drive@aiep-496715.iam.gserviceaccount.com "
+                      "o regenera GOOGLE_OAUTH_REFRESH_TOKEN."
+                  ) from service_exc
+              with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+                  env_file.write("GOOGLE_AUTH_MODE=service_account\n")
+              print(f"OK Drive con cuenta de servicio: {folder['name']} ({folder['id']})")
           PY
 
       - name: Probar acceso Supabase
