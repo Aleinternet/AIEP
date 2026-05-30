@@ -57,8 +57,8 @@ jobs:
             echo "::notice::Importacion omitida: faltan secrets de Supabase."
             ready=false
           fi
-          if [ -z "$GOOGLE_PRIVATE_KEY" ] && { [ -z "$GOOGLE_OAUTH_CLIENT_ID" ] || [ -z "$GOOGLE_OAUTH_CLIENT_SECRET" ] || [ -z "$GOOGLE_OAUTH_REFRESH_TOKEN" ]; }; then
-            echo "::notice::Importacion omitida: falta GOOGLE_PRIVATE_KEY o el trio OAuth de Google Drive."
+          if [ -z "$GOOGLE_PRIVATE_KEY" ]; then
+            echo "::notice::Importacion omitida: falta GOOGLE_PRIVATE_KEY para usar la cuenta de servicio de Google Drive."
             ready=false
           fi
           echo "ready=$ready" >> "$GITHUB_OUTPUT"
@@ -79,6 +79,7 @@ jobs:
           GOOGLE_DRIVE_AIEP_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_AIEP_FOLDER_ID || '1VzcG1kLr9noQR9UPvzRVZAU2peWwLe1i' }}
           GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL || 'aiep-drive@aiep-496715.iam.gserviceaccount.com' }}
           GOOGLE_PRIVATE_KEY: ${{ secrets.GOOGLE_PRIVATE_KEY }}
+          GOOGLE_AUTH_MODE: service_account
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
@@ -140,6 +141,7 @@ jobs:
           GOOGLE_DRIVE_AIEP_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_AIEP_FOLDER_ID || '1VzcG1kLr9noQR9UPvzRVZAU2peWwLe1i' }}
           GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL || 'aiep-drive@aiep-496715.iam.gserviceaccount.com' }}
           GOOGLE_PRIVATE_KEY: ${{ secrets.GOOGLE_PRIVATE_KEY }}
+          GOOGLE_AUTH_MODE: service_account
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
