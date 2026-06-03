@@ -50,6 +50,7 @@ public static class Win32Input {
 "@
 
 $logPath = Join-Path $env:TEMP "abg-whatsapp-helper.log"
+$sentCachePath = Join-Path $env:TEMP "abg-whatsapp-sent-cache.json"
 
 function Write-HelperLog {
   param([string]$Message)
@@ -59,6 +60,83 @@ function Write-HelperLog {
   } catch {
     # El log es solo diagnostico; no debe detener el envio.
   }
+}
+
+function Get-SendFingerprint {
+  param(
+    [string]$Phone,
+    [string]$Message
+  )
+
+  $payload = "$Phone`n$Message"
+  $bytes = [Text.Encoding]::UTF8.GetBytes($payload)
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $hash = $sha.ComputeHash($bytes)
+    return [BitConverter]::ToString($hash).Replace("-", "").ToLowerInvariant()
+  } finally {
+    $sha.Dispose()
+  }
+}
+
+function Read-SentCache {
+  if (-not (Test-Path -LiteralPath $sentCachePath)) { return @() }
+  try {
+    $raw = Get-Content -LiteralPath $sentCachePath -Raw -ErrorAction Stop
+    if ([string]::IsNullOrWhiteSpace($raw)) { return @() }
+    $items = $raw | ConvertFrom-Json
+    return @($items)
+  } catch {
+    Write-HelperLog "No se pudo leer cache de envios: $($_.Exception.Message)"
+    return @()
+  }
+}
+
+function Write-SentCache {
+  param([array]$Items)
+
+  try {
+    $Items | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $sentCachePath -Encoding UTF8
+  } catch {
+    Write-HelperLog "No se pudo escribir cache de envios: $($_.Exception.Message)"
+  }
+}
+
+function Test-RecentlySent {
+  param([string]$Fingerprint)
+
+  $cutoff = (Get-Date).AddHours(-20)
+  $items = @(Read-SentCache | Where-Object {
+    try {
+      ([datetime]$_.sentAt) -ge $cutoff
+    } catch {
+      $false
+    }
+  })
+  Write-SentCache -Items $items
+  return @($items | Where-Object { $_.fingerprint -eq $Fingerprint }).Count -gt 0
+}
+
+function Add-SentCache {
+  param(
+    [string]$Fingerprint,
+    [string]$Phone
+  )
+
+  $cutoff = (Get-Date).AddHours(-20)
+  $items = @(Read-SentCache | Where-Object {
+    try {
+      ([datetime]$_.sentAt) -ge $cutoff
+    } catch {
+      $false
+    }
+  })
+  $items += [pscustomobject]@{
+    fingerprint = $Fingerprint
+    phone = $Phone
+    sentAt = (Get-Date).ToString("o")
+  }
+  Write-SentCache -Items $items
 }
 
 function Get-PayloadJson {
@@ -132,6 +210,16 @@ function Close-CurrentChat {
 
   if ($null -eq $WhatsApp) { return }
   $shell = $WhatsApp.Shell
+  try {
+    if (Click-MessageInputFallback) {
+      Send-ControlKey -Key 0x41
+      Start-Sleep -Milliseconds 120
+      Send-VirtualKey -Key 0x08
+      Start-Sleep -Milliseconds 250
+    }
+  } catch {
+    Write-HelperLog "No se pudo limpiar caja antes de cerrar chat: $($_.Exception.Message)"
+  }
   $shell.SendKeys("{ESC}")
   Start-Sleep -Milliseconds 500
   $shell.SendKeys("{ESC}")
@@ -303,18 +391,11 @@ function Invoke-SendButtonByCoordinates {
     return $false
   }
 
-  $points = @(
-    @($rect.Right - 54, $rect.Bottom - 52),
-    @($rect.Right - 72, $rect.Bottom - 52)
-  )
-
-  foreach ($point in $points) {
-    $x = [int]$point[0]
-    $y = [int]$point[1]
-    Write-HelperLog "Click coordenado candidato enviar: x=$x y=$y"
-    Click-At -X $x -Y $y
-    Start-Sleep -Milliseconds 800
-  }
+  $x = [int]($rect.Right - 54)
+  $y = [int]($rect.Bottom - 52)
+  Write-HelperLog "Click coordenado candidato enviar: x=$x y=$y"
+  Click-At -X $x -Y $y
+  Start-Sleep -Milliseconds 1400
 
   return $true
 }
@@ -326,49 +407,70 @@ function Press-Send {
   )
 
   if ($null -eq $WhatsApp) { return $false }
-  $shell = $WhatsApp.Shell
 
-  Prepare-MessageInput -Text $Text | Out-Null
+  if (-not (Prepare-MessageInput -Text $Text)) {
+    return $false
+  }
 
   if (Invoke-SendButtonByAutomation) { return $true }
 
-  Write-HelperLog "Fallback teclado Enter con foco en caja de chat."
-  Send-VirtualKey -Key 0x0D
-  Start-Sleep -Milliseconds 1000
-  $shell.SendKeys("~")
-  Start-Sleep -Milliseconds 700
-
+  Write-HelperLog "Fallback click unico por coordenadas en boton enviar."
   if (Invoke-SendButtonByCoordinates) { return $true }
 
   return $false
 }
 
-$json = Get-PayloadJson -ProtocolUrl $Url
-$payload = $json | ConvertFrom-Json
+function Invoke-WhatsAppSendFlow {
+  $json = Get-PayloadJson -ProtocolUrl $Url
+  $payload = $json | ConvertFrom-Json
 
-if (-not $payload.phone) { throw "Falta telefono." }
-if (-not $payload.message) { throw "Falta mensaje." }
+  if (-not $payload.phone) { throw "Falta telefono." }
+  if (-not $payload.message) { throw "Falta mensaje." }
 
-$phone = [string]$payload.phone
-$rawMessage = [string]$payload.message
-$message = [Uri]::EscapeDataString($rawMessage)
-$whatsAppUrl = "whatsapp://send?phone=$phone&text=$message"
+  $phone = [string]$payload.phone
+  $rawMessage = [string]$payload.message
+  $fingerprint = Get-SendFingerprint -Phone $phone -Message $rawMessage
+  if (Test-RecentlySent -Fingerprint $fingerprint) {
+    Write-HelperLog "Envio omitido por duplicado reciente para phone=$phone"
+    return
+  }
 
-$currentWhatsApp = Activate-WhatsApp -Seconds 2
-Close-CurrentChat -WhatsApp $currentWhatsApp
+  $message = [Uri]::EscapeDataString($rawMessage)
+  $whatsAppUrl = "whatsapp://send?phone=$phone&text=$message"
 
-Write-HelperLog "Abriendo WhatsApp para phone=$phone"
-(New-Object -ComObject Shell.Application).ShellExecute($whatsAppUrl, $null, $null, "open", 1) | Out-Null
-Start-Sleep -Seconds 14
+  $currentWhatsApp = Activate-WhatsApp -Seconds 2
+  Close-CurrentChat -WhatsApp $currentWhatsApp
 
-$whatsApp = Activate-WhatsApp -Seconds 10
-if ($null -eq $whatsApp) {
-  throw "No se pudo activar WhatsApp Desktop."
+  Write-HelperLog "Abriendo WhatsApp para phone=$phone"
+  (New-Object -ComObject Shell.Application).ShellExecute($whatsAppUrl, $null, $null, "open", 1) | Out-Null
+  Start-Sleep -Seconds 14
+
+  $whatsApp = Activate-WhatsApp -Seconds 10
+  if ($null -eq $whatsApp) {
+    throw "No se pudo activar WhatsApp Desktop."
+  }
+
+  if (-not (Press-Send -WhatsApp $whatsApp -Text $rawMessage)) {
+    throw "No se pudo presionar Enviar en WhatsApp Desktop."
+  }
+
+  Add-SentCache -Fingerprint $fingerprint -Phone $phone
+  Start-Sleep -Seconds 3
+  Close-CurrentChat -WhatsApp $whatsApp
+  Write-HelperLog "Flujo WhatsApp finalizado para phone=$phone"
 }
 
-if (-not (Press-Send -WhatsApp $whatsApp -Text $rawMessage)) {
-  throw "No se pudo presionar Enviar en WhatsApp Desktop."
+$helperMutex = New-Object System.Threading.Mutex($false, "Local\ABGWhatsAppLocalHelper")
+$helperLockTaken = $false
+try {
+  $helperLockTaken = $helperMutex.WaitOne([TimeSpan]::FromSeconds(180))
+  if (-not $helperLockTaken) {
+    throw "Hay otro envio WhatsApp local en curso. Se cancela para evitar duplicados."
+  }
+  Invoke-WhatsAppSendFlow
+} finally {
+  if ($helperLockTaken) {
+    try { $helperMutex.ReleaseMutex() | Out-Null } catch { }
+  }
+  $helperMutex.Dispose()
 }
-Start-Sleep -Seconds 3
-Close-CurrentChat -WhatsApp $whatsApp
-Write-HelperLog "Flujo WhatsApp finalizado para phone=$phone"

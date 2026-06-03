@@ -52,6 +52,7 @@ let campaignChannel = "";
 let campaignTotal = 0;
 let campaignSkippedToday = 0;
 let campaignSkippedByRules = 0;
+let campaignSkippedDuplicateContacts = 0;
 let lastExcludeIndex = null;
 let whatsappWindow = null;
 
@@ -1003,7 +1004,17 @@ function renderHistoryCards(debtor) {
 
 function renderContacts(debtor, type, values) {
   if (!values.length) return `<div class="detail-empty">Sin ${type === "telefono" ? "teléfonos" : "correos"} registrados.</div>`;
-  return values.map((value) => {
+  const seen = new Set();
+  const uniqueValues = values
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .filter((value) => {
+      const key = normalizedContactValue(type, value);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  return uniqueValues.map((value) => {
     const saved = contactRecord(debtor, type, value);
     const cls = saved.status === "ok" ? "ok" : saved.status === "ignore" ? "ignore" : saved.status === "manual" ? "manual" : "";
     const message = buildContactMessage(debtor, type, value);
@@ -1229,16 +1240,17 @@ function openMailClient(email, body, htmlBody = "", options = {}) {
       htmlBody: htmlBody || `<pre>${escapeHtml(body)}</pre>`,
     };
     openOutlookProtocol(payload);
-    return;
+    return true;
   }
   window.location.href = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent("Regularizacion deuda AIEP")}&body=${encodeURIComponent(body)}`;
+  return true;
 }
 
 function openWhatsAppClient(phone, message) {
   const normalizedPhone = phoneForWhatsApp(phone);
   if (!isValidWhatsAppPhone(phone)) {
     if ($("copyStatus")) $("copyStatus").textContent = "Telefono no valido para WhatsApp.";
-    return;
+    return false;
   }
   if (whatsappLocalModeEnabled()) {
     const payload = {
@@ -1246,14 +1258,14 @@ function openWhatsAppClient(phone, message) {
       message,
     };
     window.location.href = `abg-whatsapp://send?payload=${base64UrlEncode(JSON.stringify(payload))}`;
-    return;
+    return true;
   }
-  openWhatsAppWeb(phone, message);
+  return openWhatsAppWeb(phone, message);
 }
 
 function openWhatsAppWeb(phone, message) {
   const normalizedPhone = phoneForWhatsApp(phone);
-  if (!isValidWhatsAppPhone(phone)) return;
+  if (!isValidWhatsAppPhone(phone)) return false;
   const url = `https://web.whatsapp.com/send?phone=${normalizedPhone}&text=${encodeURIComponent(message)}`;
   if (whatsappWindow && !whatsappWindow.closed) {
     try {
@@ -1261,11 +1273,12 @@ function openWhatsAppWeb(phone, message) {
       if (!whatsappWindow.closed) {
         whatsappWindow.location.href = url;
         whatsappWindow.focus();
-        return;
+        return true;
       }
     } catch {}
   }
-  whatsappWindow = window.open(url, `abg_whatsapp_${Date.now()}`);
+  whatsappWindow = window.open(url, "abg_whatsapp_activo");
+  return Boolean(whatsappWindow);
 }
 
 function updateContactStatus(event) {
@@ -1312,11 +1325,19 @@ function deleteContactMeta(event) {
 
 function usableContacts(debtor, type) {
   const values = type === "correo" ? debtor.correos : debtor.telefonos;
-  return [...new Set(values)]
-    .map((value) => String(value || "").trim())
-    .filter(Boolean)
-    .filter((value) => type === "correo" || isValidWhatsAppPhone(value))
-    .filter((value) => !isIgnoredContact(debtor, type, value));
+  const seen = new Set();
+  const contacts = [];
+  values.forEach((rawValue) => {
+    const value = String(rawValue || "").trim();
+    if (!value) return;
+    if (type === "telefono" && !isValidWhatsAppPhone(value)) return;
+    if (isIgnoredContact(debtor, type, value)) return;
+    const normalized = normalizedContactValue(type, value);
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    contacts.push(type === "telefono" ? phoneForWhatsApp(value) : value.toLowerCase());
+  });
+  return contacts;
 }
 
 function hasManagementToday(debtor) {
@@ -1354,8 +1375,10 @@ function campaignBlockReason(debtor) {
 }
 
 function campaignSkippedText() {
-  if (!campaignSkippedByRules) return "";
-  return ` Omitidos por convenio/gestiones recientes: ${campaignSkippedByRules}.`;
+  const parts = [];
+  if (campaignSkippedByRules) parts.push(`omitidos por convenio/gestiones recientes: ${campaignSkippedByRules}`);
+  if (campaignSkippedDuplicateContacts) parts.push(`telefonos/correos repetidos omitidos: ${campaignSkippedDuplicateContacts}`);
+  return parts.length ? ` ${parts.join(". ")}.` : "";
 }
 
 function campaignTargets(type) {
@@ -1370,15 +1393,31 @@ function campaignTargets(type) {
     .filter((debtor) => usableContacts(debtor, type).length);
   campaignSkippedToday = validDebtors.filter(hasManagementToday).length;
   campaignSkippedByRules = validDebtors.filter((debtor) => campaignBlockReason(debtor)).length;
-  return validDebtors
+  const targets = [];
+  const campaignSeenContacts = new Set();
+  validDebtors
     .filter((debtor) => !campaignBlockReason(debtor))
-    .flatMap((debtor) => usableContacts(debtor, type).map((value) => ({ debtor, value })))
-    .slice(0, limit);
+    .some((debtor) => {
+      const contacts = usableContacts(debtor, type);
+      for (const value of contacts) {
+        const key = normalizedContactValue(type, value);
+        if (campaignSeenContacts.has(key)) {
+          campaignSkippedDuplicateContacts += 1;
+          continue;
+        }
+        campaignSeenContacts.add(key);
+        targets.push({ debtor, value });
+        if (targets.length >= limit) return true;
+      }
+      return false;
+    });
+  return targets;
 }
 
 function startCampaign(type) {
   stopCampaign(false);
   campaignChannel = type;
+  campaignSkippedDuplicateContacts = 0;
   campaignQueue = campaignTargets(type);
   campaignTotal = campaignQueue.length;
   if (!campaignQueue.length) {
@@ -1403,17 +1442,24 @@ function deliverCampaignItem() {
   }
   const item = campaignQueue.shift();
   setText("campaignStatus", `Enviando/preparando: ${campaignTargetLabel(item)}`);
-  recordCampaignManagement(item.debtor, campaignChannel, item.value);
+  let launched = false;
   if (campaignChannel === "correo") {
     const message = buildWhatsappMessage(item.debtor);
-    openMailClient(item.value, message, buildWhatsappEmailHtml(item.debtor), { autoSend: outlookAutoSendEnabled() });
+    launched = openMailClient(item.value, message, buildWhatsappEmailHtml(item.debtor), { autoSend: outlookAutoSendEnabled() });
   } else {
-    openWhatsAppClient(item.value, buildWhatsappMessage(item.debtor));
+    launched = openWhatsAppClient(item.value, buildWhatsappMessage(item.debtor));
+  }
+  if (launched) {
+    recordCampaignManagement(item.debtor, campaignChannel, item.value);
   }
   const sent = campaignTotal - campaignQueue.length;
   const next = campaignQueue.length ? ` Siguiente: ${campaignTargetLabel(campaignQueue[0])}.` : "";
   setText("campaignStatus", `${sent} enviados/preparados y registrados. Quedan ${campaignQueue.length}.${next}${campaignSkippedText()}`);
-  const intervalMs = Math.max(5, Number($("campaignInterval").value || 20)) * 1000;
+  const requestedSeconds = Math.max(5, Number($("campaignInterval").value || 20));
+  const intervalSeconds = campaignChannel === "telefono" && whatsappLocalModeEnabled()
+    ? Math.max(35, requestedSeconds)
+    : requestedSeconds;
+  const intervalMs = intervalSeconds * 1000;
   if (campaignQueue.length) campaignTimer = window.setTimeout(deliverCampaignItem, intervalMs);
 }
 
@@ -1443,6 +1489,7 @@ function stopCampaign(updateStatus = true) {
   campaignTotal = 0;
   campaignSkippedToday = 0;
   campaignSkippedByRules = 0;
+  campaignSkippedDuplicateContacts = 0;
   if (updateStatus) setText("campaignStatus", "Campana detenida");
 }
 
