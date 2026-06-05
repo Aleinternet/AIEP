@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>ABG RECOV | Plataforma Cobranzas AIEP</title>
-    <link rel="stylesheet" href="assets/css/styles.css?v=20260519-1">
+    <link rel="stylesheet" href="assets/css/styles.css?v=20260604-2">
   </head>
   <body class="logged-out">
     <section class="login-screen" id="loginScreen">
@@ -407,6 +407,15 @@
             <div class="panel-head"><h2>Asignacion por ejecutivo</h2><span>base vigente</span></div>
             <div id="itAssignmentBars" class="bars"></div>
           </section>
+          <section class="panel wide">
+            <div class="panel-head"><h2>Asignados por remesa</h2><span>equivalente a Totales base</span></div>
+            <div class="table-wrap compact-table-wrap">
+              <table>
+                <thead id="itAssignmentMatrixHead"></thead>
+                <tbody id="itAssignmentMatrixRows"></tbody>
+              </table>
+            </div>
+          </section>
           <section class="panel">
             <div class="panel-head"><h2>Checklist productivo</h2><span>segun instructivo</span></div>
             <div id="itChecklist" class="checklist-grid"></div>
@@ -565,6 +574,6 @@
 
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="data/app-data.js?v=20260604-1"></script>
-    <script src="assets/js/app.js?v=20260604-1"></script>
+    <script src="assets/js/app.js?v=20260604-2"></script>
   </body>
 </html>

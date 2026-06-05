@@ -120,6 +120,19 @@ create table if not exists audit_files (
 );
 
 alter table debtors
+  add column if not exists rut_deudor text,
+  add column if not exists rut_deudor_normalizado text,
+  add column if not exists procedimiento text,
+  add column if not exists usuario text,
+  add column if not exists equipo text,
+  add column if not exists asignacion text,
+  add column if not exists fecha_emision date,
+  add column if not exists atraso_gestion text,
+  add column if not exists tipo_contacto text,
+  add column if not exists resultado text,
+  add column if not exists observacion text,
+  add column if not exists ubicabilidad text,
+  add column if not exists tel_validado text,
   add column if not exists id_rem text,
   add column if not exists assigned_executive_id uuid references executives(id),
   add column if not exists is_active boolean not null default true,

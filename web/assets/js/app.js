@@ -1870,6 +1870,35 @@ function assignmentGroups(debtors = data.debtors) {
   }, {})).sort((a, b) => b[1].deudaTotal - a[1].deudaTotal);
 }
 
+function assignmentRemesaMatrix(debtors = data.debtors) {
+  const remesas = [...new Set(debtors.map((debtor) => debtor.cartera).filter(Boolean))]
+    .sort((a, b) => String(a).localeCompare(String(b), "es", { numeric: true }));
+  const rows = new Map();
+  for (const debtor of debtors) {
+    const assignment = assignmentName(debtor);
+    if (!rows.has(assignment)) rows.set(assignment, { total: 0, remesas: {} });
+    const row = rows.get(assignment);
+    row.total += 1;
+    if (debtor.cartera) row.remesas[debtor.cartera] = (row.remesas[debtor.cartera] || 0) + 1;
+  }
+  return {
+    remesas,
+    rows: [...rows.entries()].sort((a, b) => b[1].total - a[1].total),
+  };
+}
+
+function renderInformaticoAssignmentMatrix() {
+  const matrix = assignmentRemesaMatrix();
+  $("itAssignmentMatrixHead").innerHTML = `<tr><th>Asignado</th>${matrix.remesas.map((name) => `<th>${escapeHtml(name)}</th>`).join("")}<th>Total</th></tr>`;
+  $("itAssignmentMatrixRows").innerHTML = matrix.rows.length ? matrix.rows.map(([name, row]) => `
+    <tr>
+      <td><strong>${escapeHtml(name)}</strong></td>
+      ${matrix.remesas.map((remesa) => `<td>${row.remesas[remesa] ? fmtNum.format(row.remesas[remesa]) : ""}</td>`).join("")}
+      <td><strong>${fmtNum.format(row.total)}</strong></td>
+    </tr>
+  `).join("") : `<tr><td colspan="${matrix.remesas.length + 2}">Sin asignaciones cargadas desde cartera.</td></tr>`;
+}
+
 function renderInformaticoHome() {
   const totalDebt = data.debtors.reduce((sum, debtor) => sum + Number(debtor.deudaTotal || 0), 0);
   const noContact = data.debtors.filter((debtor) => !(debtor.telefonos || []).length && !(debtor.correos || []).length).length;
@@ -1886,6 +1915,7 @@ function renderInformaticoHome() {
     ["Con convenio local", Object.keys(store.agreements).length],
   ]);
   renderBars("itAssignmentBars", groups.slice(0, 12).map(([name, row]) => [name, row.count]));
+  renderInformaticoAssignmentMatrix();
   $("itChecklist").innerHTML = [
     ["Supabase fuente de verdad", "API server-side activa para cartera y deudores."],
     ["Preview antes de importar", "Pantalla creada; falta conectar apply transaccional."],
@@ -2220,16 +2250,14 @@ async function createMissingExecutiveProfiles() {
   const groups = assignmentGroups().map(([name]) => name).filter((name) => name && name !== "Sin asignacion");
   let created = 0;
   let failed = 0;
-  const credentials = [];
   for (const assignment of groups) {
     const username = assignmentUsername(assignment);
     if (store.internalUsers.some((user) => normalizeUsername(user.username) === username)) continue;
-    const password = generateTemporaryPassword();
     try {
       const json = await internalUsersApi("save", {
         user: {
           username,
-          password,
+          password: "123456",
           role: "callcenter",
           displayName: assignment,
           assignmentName: assignment,
@@ -2237,24 +2265,15 @@ async function createMissingExecutiveProfiles() {
         },
       });
       store.internalUsers.push(json.user);
-      credentials.push({ username, password, assignment });
       created += 1;
     } catch {
       failed += 1;
     }
   }
   pushAudit("internal_users_bulk_create", "app_user", "callcenter_profiles", { created, failed });
-  const csv = credentials.map((item) => `${item.username};${item.password};${item.assignment}`).join("\n");
-  $("itUserStatus").innerHTML = `<div class="history-item"><strong>Perfiles creados en Supabase: ${fmtNum.format(created)}</strong><br>Fallidos: ${fmtNum.format(failed)}. Guarde estas contrasenas ahora; despues solo podran cambiarse, no consultarse.<br><textarea readonly class="wide-textarea">${escapeHtml(`usuario;contrasena;asignacion\n${csv}`)}</textarea></div>`;
+  $("itUserStatus").innerHTML = `<div class="history-item"><strong>Perfiles creados en Supabase: ${fmtNum.format(created)}</strong><br>Fallidos: ${fmtNum.format(failed)}. Clave inicial para todos: 123456. El perfil Informatico puede cambiarla manualmente.</div>`;
   renderInformaticoUsers();
   renderInformaticoAudit();
-}
-
-function generateTemporaryPassword() {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
-  const bytes = new Uint32Array(10);
-  crypto.getRandomValues(bytes);
-  return `Aiep-${Array.from(bytes, (value) => chars[value % chars.length]).join("")}`;
 }
 
 function renderInformaticoReports() {
