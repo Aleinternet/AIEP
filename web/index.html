@@ -34,7 +34,7 @@
             <h2>Ingreso ejecutivo</h2>
             <button id="closeInternalLogin" type="button">Cerrar</button>
           </div>
-          <p class="login-help">Acceso interno para call center y jefatura.</p>
+          <p class="login-help">Acceso interno para call center, jefatura e informatico.</p>
           <form id="internalLoginForm" class="login-form">
             <label>Usuario
               <input id="internalUser" autocomplete="username" placeholder="Usuario interno">
@@ -390,10 +390,181 @@
           <div id="fileRepository" class="file-list"></div>
         </div>
       </section>
+
+      <section class="view" id="informaticoHome">
+        <div class="kpi-grid">
+          <article class="kpi"><span>Cartera total</span><strong id="itKpiTotal">0</strong><small>registros vigentes</small></article>
+          <article class="kpi"><span>Deuda total</span><strong id="itKpiDebt">$0</strong><small>monto operacional</small></article>
+          <article class="kpi"><span>Asignados</span><strong id="itKpiExecutives">0</strong><small>ejecutivos detectados</small></article>
+          <article class="kpi"><span>Sin contacto</span><strong id="itKpiNoContact">0</strong><small>casos a corregir</small></article>
+        </div>
+        <div class="dashboard-grid">
+          <section class="panel">
+            <div class="panel-head"><h2>Control operativo</h2><span>cartera oficial</span></div>
+            <div id="itOperationalBars" class="bars"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><h2>Asignacion por ejecutivo</h2><span>base vigente</span></div>
+            <div id="itAssignmentBars" class="bars"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><h2>Checklist productivo</h2><span>segun instructivo</span></div>
+            <div id="itChecklist" class="checklist-grid"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><h2>Ultimos cambios</h2><span>auditoria local/API</span></div>
+            <div id="itRecentAudit" class="history"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="informaticoPortfolio">
+        <div class="panel full-height-panel">
+          <div class="panel-head">
+            <h2>Cartera total</h2>
+            <span>vista tipo planilla con filtros oficiales</span>
+          </div>
+          <div class="toolbar">
+            <select id="itStateFilter"><option value="">Todos los estados</option></select>
+            <select id="itAssignmentFilter"><option value="">Toda asignacion</option></select>
+            <label>Deuda desde<input id="itDebtMin" inputmode="numeric" placeholder="$0"></label>
+            <label>Deuda hasta<input id="itDebtMax" inputmode="numeric" placeholder="Sin tope"></label>
+            <label>Buscar<input id="itSearch" type="search" placeholder="RUT, nombre, comuna, rol"></label>
+            <button id="clearItFilters" type="button">Limpiar filtros</button>
+          </div>
+          <div class="table-wrap it-table-wrap">
+            <table class="official-sheet-table">
+              <thead>
+                <tr>
+                  <th>RUT</th><th>Titular</th><th>Alumno</th><th>Deuda</th><th>Estado</th><th>Asignado</th>
+                  <th>Telefono</th><th>Correo</th><th>Comuna</th><th>Rol</th><th>Tribunal</th><th>Ult. gestion</th><th>Accion</th>
+                </tr>
+              </thead>
+              <tbody id="itPortfolioRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="informaticoImport">
+        <div class="panel">
+          <div class="panel-head"><h2>Importar / actualizar cartera</h2><span>preview antes de aplicar</span></div>
+          <form id="itImportForm" class="form-grid">
+            <label>Archivo Excel, CSV o Google Sheets exportado
+              <input id="itImportFile" type="file" accept=".xlsx,.xls,.csv">
+            </label>
+            <label>Modo
+              <select id="itImportMode">
+                <option value="cartera_total">Cartera total</option>
+                <option value="cartera_ejecutivo">Cartera por ejecutivo</option>
+                <option value="solo_asignaciones">Solo asignaciones</option>
+                <option value="parche_datos">Parche de datos</option>
+                <option value="solo_contactos">Solo contactos</option>
+              </select>
+            </label>
+            <label>Forzar asignacion destino
+              <input id="itForceAssignment" placeholder="Ej: Francesca / callcenter">
+            </label>
+            <label>Motivo del cambio
+              <input id="itImportReason" placeholder="Actualizacion cartera oficial">
+            </label>
+            <button type="submit">Generar preview</button>
+          </form>
+          <div id="itImportStatus" class="history"></div>
+          <div class="table-wrap import-preview-wrap">
+            <table>
+              <thead><tr><th>Indicador</th><th>Resultado</th><th>Detalle</th></tr></thead>
+              <tbody id="itImportPreviewRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="informaticoAssignments">
+        <div class="panel">
+          <div class="panel-head"><h2>Reasignaciones</h2><span>por RUT/id_rem y ejecutivo</span></div>
+          <form id="itAssignmentForm" class="form-grid">
+            <label>RUT o id_rem
+              <input id="itAssignmentKey" placeholder="RUT, alumno, titular o id_rem">
+            </label>
+            <label>Nuevo asignado
+              <input id="itAssignmentTarget" placeholder="Nombre ejecutivo">
+            </label>
+            <label class="wide">Motivo
+              <textarea id="itAssignmentReason" rows="3" placeholder="Motivo de reasignacion"></textarea>
+            </label>
+            <button type="submit">Registrar reasignacion</button>
+          </form>
+          <div id="itAssignmentStatus" class="history"></div>
+          <div id="itAssignmentSummary" class="bars"></div>
+        </div>
+      </section>
+
+      <section class="view" id="informaticoAudit">
+        <div class="panel full-height-panel">
+          <div class="panel-head"><h2>Auditoria</h2><span>cambios administrativos y eventos</span></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Fecha</th><th>Usuario</th><th>Accion</th><th>Entidad</th><th>Detalle</th></tr></thead>
+              <tbody id="itAuditRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="informaticoUsers">
+        <div class="panel">
+          <div class="panel-head"><h2>Usuarios y asignados</h2><span>catalogo operativo</span></div>
+          <form id="itUserForm" class="form-grid">
+            <label>Usuario
+              <input id="itUserUsername" placeholder="ej: francesca">
+            </label>
+            <label>Nombre visible
+              <input id="itUserDisplayName" placeholder="Nombre ejecutivo">
+            </label>
+            <label>Rol
+              <select id="itUserRole">
+                <option value="callcenter">Call center</option>
+                <option value="jefatura">Jefatura</option>
+                <option value="informatico">Informatico</option>
+              </select>
+            </label>
+            <label>Asignacion visible
+              <input id="itUserAssignment" placeholder="Debe coincidir con columna asignacion">
+            </label>
+            <label>Contrasena
+              <input id="itUserPassword" type="password" placeholder="Contrasena inicial">
+            </label>
+            <button type="submit">Guardar perfil</button>
+            <button id="itCreateMissingExecutives" type="button">Crear perfiles faltantes</button>
+            <button id="itSyncUsers" type="button">Sincronizar Supabase</button>
+          </form>
+          <div id="itUserStatus" class="history"></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Usuario</th><th>Rol</th><th>Asignacion</th><th>Cartera</th><th>Estado</th><th>Cambiar contrasena</th><th>Accion</th></tr></thead>
+              <tbody id="itUsersRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="informaticoReports">
+        <div class="dashboard-grid">
+          <section class="panel">
+            <div class="panel-head"><h2>Ranking por deuda</h2><span>ejecutivos/asignados</span></div>
+            <div id="itExecutiveDebtBars" class="bars"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><h2>Contactabilidad por asignado</h2><span>calidad de base</span></div>
+            <div id="itContactabilityBars" class="bars"></div>
+          </section>
+        </div>
+      </section>
     </main>
 
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    <script src="data/app-data.js?v=20260514-2"></script>
-    <script src="assets/js/app.js?v=20260528-1"></script>
+    <script src="data/app-data.js?v=20260604-1"></script>
+    <script src="assets/js/app.js?v=20260604-1"></script>
   </body>
 </html>

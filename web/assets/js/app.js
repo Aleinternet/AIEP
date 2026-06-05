@@ -40,6 +40,8 @@ const store = {
   comments: readJson("abg_comments", {}),
   campaignExcluded: readJson("abg_campaign_excluded", {}),
   bankRows: readJson("abg_bank_rows", []),
+  audit: readJson("abg_audit", []),
+  internalUsers: [],
 };
 
 let session = null;
@@ -92,6 +94,7 @@ async function loadPortfolioFromApi(user, pass) {
     body: JSON.stringify({ user, pass }),
   });
   applyRemoteData(json.data);
+  return json;
 }
 
 async function loadDebtorFromApi(rut) {
@@ -137,6 +140,45 @@ titles.executiveValidation = "Validacion de pagos";
 routeByView.executiveValidation = "callcenter/validacion";
 viewByRoute["callcenter/validacion"] = "executiveValidation";
 
+views.informatico = [
+  { id: "informaticoHome", label: "Dashboard TI" },
+  { id: "informaticoPortfolio", label: "Cartera total" },
+  { id: "executiveHome", label: "Ficha deudor" },
+  { id: "informaticoImport", label: "Importar" },
+  { id: "informaticoAssignments", label: "Reasignaciones" },
+  { id: "informaticoAudit", label: "Auditoria" },
+  { id: "informaticoUsers", label: "Usuarios" },
+  { id: "informaticoReports", label: "Reportes" },
+  { id: "localFiles", label: "Repositorio" },
+];
+Object.assign(titles, {
+  informaticoHome: "Dashboard informatico",
+  informaticoPortfolio: "Cartera total",
+  informaticoImport: "Importar / actualizar",
+  informaticoAssignments: "Reasignaciones",
+  informaticoAudit: "Auditoria",
+  informaticoUsers: "Usuarios y asignados",
+  informaticoReports: "Reportes informatico",
+});
+Object.assign(routeByView, {
+  informaticoHome: "informatico",
+  informaticoPortfolio: "informatico/cartera",
+  informaticoImport: "informatico/importar",
+  informaticoAssignments: "informatico/reasignaciones",
+  informaticoAudit: "informatico/auditoria",
+  informaticoUsers: "informatico/usuarios",
+  informaticoReports: "informatico/reportes",
+});
+Object.assign(viewByRoute, {
+  informatico: "informaticoHome",
+  "informatico/cartera": "informaticoPortfolio",
+  "informatico/importar": "informaticoImport",
+  "informatico/reasignaciones": "informaticoAssignments",
+  "informatico/auditoria": "informaticoAudit",
+  "informatico/usuarios": "informaticoUsers",
+  "informatico/reportes": "informaticoReports",
+});
+
 function $(id) {
   return document.getElementById(id);
 }
@@ -151,6 +193,46 @@ function readJson(key, fallback) {
 
 function writeJson(key, value) {
   localStorage.setItem(key, JSON.stringify(value));
+}
+
+function normalizeUsername(value) {
+  return normalizeText(value).replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "");
+}
+
+function assignmentUsername(value) {
+  return normalizeUsername(value || "").slice(0, 42) || "ejecutivo";
+}
+
+function roleFromInternalUser(user) {
+  if (!user) return "";
+  return user.role === "callcenter" ? "ejecutivo" : user.role;
+}
+
+async function internalUsersApi(action, payload = {}) {
+  if (!session?.username || !session?.authPassword) throw new Error("Sesion administrativa no disponible.");
+  return requestJson("/api/internal-users", {
+    method: "POST",
+    body: JSON.stringify({
+      action,
+      adminUser: session.username,
+      adminPass: session.authPassword,
+      ...payload,
+    }),
+  });
+}
+
+async function syncInternalUsersFromApi(showStatus = true) {
+  try {
+    const json = await internalUsersApi("list");
+    store.internalUsers = json.users || [];
+    if (showStatus) $("itUserStatus").innerHTML = `<div class="history-item"><strong>Usuarios sincronizados desde Supabase</strong><br>${fmtNum.format(json.users?.length || 0)} perfiles recibidos.</div>`;
+    renderInformaticoUsers();
+    return true;
+  } catch (error) {
+    store.internalUsers = [];
+    if (showStatus) $("itUserStatus").innerHTML = `<div class="detail-empty">No se pudo sincronizar con Supabase. No se permite gestion local de usuarios: ${escapeHtml(error.message)}</div>`;
+    return false;
+  }
 }
 
 function setText(id, value) {
@@ -370,17 +452,29 @@ function showView(id) {
   $("globalSearchBox").hidden = session?.role !== "ejecutivo";
   const route = routeByView[id];
   if (route && location.hash.replace(/^#\/?/, "") !== route) history.replaceState(null, "", `#/${route}`);
+  if (id === "executiveHome") {
+    renderExecutiveRows();
+    renderExecutiveDetail();
+  }
   if (id === "localFiles") renderFileRepository();
   if (id === "executiveValidation") renderValidationQueue();
   if (id === "managementHome") renderManagement();
   if (id === "managementAgreements") renderAgreementRegistry();
   if (id === "managementBank") renderBankRows();
+  if (id === "informaticoHome") renderInformaticoHome();
+  if (id === "informaticoPortfolio") renderInformaticoPortfolio();
+  if (id === "informaticoImport") renderInformaticoImport();
+  if (id === "informaticoAssignments") renderInformaticoAssignments();
+  if (id === "informaticoAudit") renderInformaticoAudit();
+  if (id === "informaticoUsers") renderInformaticoUsers();
+  if (id === "informaticoReports") renderInformaticoReports();
 }
 
 function defaultViewForRole(role) {
   if (role === "deudor") return "debtorHome";
   if (role === "ejecutivo") return "executiveHome";
   if (role === "jefatura") return "managementHome";
+  if (role === "informatico") return "informaticoHome";
   return "";
 }
 
@@ -406,14 +500,23 @@ function renderNav() {
   document.querySelectorAll(".nav-item").forEach((btn) => btn.addEventListener("click", () => showView(btn.dataset.view)));
 }
 
-function login(role, debtor = null) {
-  const username = role === "deudor" ? (debtor?.rutTitular || debtor?.rutAlumno || debtor?.rutDeudor) : $("internalUser").value.trim();
-  session = { role, debtorId: debtor?.id || null, username };
+function login(role, debtor = null, profile = null, password = "") {
+  const username = role === "deudor" ? (debtor?.rutTitular || debtor?.rutAlumno || debtor?.rutDeudor) : (profile?.username || $("internalUser").value.trim());
+  session = {
+    role,
+    debtorId: debtor?.id || null,
+    username,
+    displayName: profile?.displayName || username,
+    assignmentName: profile?.assignmentName || "",
+    internalUserId: profile?.id || "",
+    authPassword: password,
+  };
   sessionStartedAt = new Date();
   selectedDebtor = role === "deudor" ? debtor : null;
   document.body.classList.remove("logged-out");
   renderEntryMeta();
   loadIndicators();
+  window.setTimeout(() => setText("roleLabel", roleLabel(role, username)), 0);
   setText("roleLabel", role === "deudor" ? `Deudor · ${username}` : role === "ejecutivo" ? `Call center · ${username}` : `Jefatura · ${username}`);
   renderNav();
   fillFilters();
@@ -430,7 +533,25 @@ function login(role, debtor = null) {
     renderBankRows();
     renderAgreementRegistry();
   }
+  if (role === "informatico") {
+    renderInformaticoHome();
+    renderInformaticoPortfolio();
+    renderInformaticoImport();
+    renderInformaticoAssignments();
+    renderInformaticoAudit();
+    renderInformaticoUsers();
+    renderInformaticoReports();
+    syncInternalUsersFromApi(false);
+  }
   openRequestedOrDefault();
+}
+
+function roleLabel(role, username) {
+  if (role === "deudor") return `Deudor - ${username}`;
+  if (role === "ejecutivo") return `Call center - ${username}`;
+  if (role === "jefatura") return `Jefatura - ${username}`;
+  if (role === "informatico") return `Informatico - ${username}`;
+  return username || "Sin sesion";
 }
 
 async function handleLogin(event) {
@@ -455,32 +576,24 @@ async function handleLogin(event) {
 
 async function handleInternalLogin(event) {
   event.preventDefault();
-  const user = normalizeText($("internalUser").value.trim());
+  const user = normalizeUsername($("internalUser").value.trim());
   const pass = $("internalPass").value;
   $("internalLoginError").textContent = "";
-  if (user === "callcenter" && pass === "123456") {
-    try {
-      $("internalLoginError").textContent = "Cargando cartera...";
-      await loadPortfolioFromApi("callcenter", pass);
-      $("internalLoginError").textContent = "";
-      return login("ejecutivo");
-    } catch (error) {
-      $("internalLoginError").textContent = error.message || "No se pudo cargar la cartera.";
-      return;
-    }
+  try {
+    $("internalLoginError").textContent = "Validando usuario en la nube...";
+    const json = await loadPortfolioFromApi(user, pass);
+    const remoteUser = json.user || {
+      username: user,
+      displayName: user,
+      role: json.role,
+      assignmentName: "",
+    };
+    const role = roleFromInternalUser(remoteUser);
+    $("internalLoginError").textContent = "";
+    return login(role, null, remoteUser, pass);
+  } catch (error) {
+    $("internalLoginError").textContent = error.message || "No se pudo validar en la nube.";
   }
-  if (user === "remesa" && pass === "654321") {
-    try {
-      $("internalLoginError").textContent = "Cargando cartera...";
-      await loadPortfolioFromApi("remesa", pass);
-      $("internalLoginError").textContent = "";
-      return login("jefatura");
-    } catch (error) {
-      $("internalLoginError").textContent = error.message || "No se pudo cargar la cartera.";
-      return;
-    }
-  }
-  $("internalLoginError").textContent = "Credenciales internas inválidas.";
 }
 
 function logout() {
@@ -494,12 +607,12 @@ function logout() {
 
 function fillFilters() {
   const states = [...new Set(data.debtors.map((d) => d.estado).filter(Boolean))].sort();
-  for (const id of ["execStateFilter", "reportStateFilter", "agreementStateFilter"]) {
+  for (const id of ["execStateFilter", "reportStateFilter", "agreementStateFilter", "itStateFilter"]) {
     const node = $(id);
     if (node && node.options.length === 1) node.insertAdjacentHTML("beforeend", ["Convenio en curso", ...states].map((state) => `<option>${state}</option>`).join(""));
   }
   const assignments = [...new Set(data.debtors.map((d) => d.asignacion || d.usuario || d.equipo).filter(Boolean))].sort();
-  for (const id of ["execAssignmentFilter", "reportAssignmentFilter"]) {
+  for (const id of ["execAssignmentFilter", "reportAssignmentFilter", "itAssignmentFilter"]) {
     const node = $(id);
     if (node && node.options.length === 1) node.insertAdjacentHTML("beforeend", assignments.map((item) => `<option>${escapeAttr(item)}</option>`).join(""));
   }
@@ -582,14 +695,19 @@ function managementDateSummary(debtor, date) {
 function renderExecutiveHead(managementDates) {
   $("executiveHead").innerHTML = `
     <tr>
-      <th>Titular</th>
-      <th>RUT</th>
+      <th class="sticky-col">Sel / titular</th>
+      <th>RUT titular</th>
+      <th>Alumno</th>
+      <th>Deuda total</th>
       <th>Estado</th>
-      <th>Saldo capital</th>
-      <th>Oferta</th>
-      <th>Contacto</th>
-      <th>Ult. 3 dias</th>
-      <th>Dias s/gestion</th>
+      <th>Asignado</th>
+      <th>Telefono</th>
+      <th>Correo</th>
+      <th>Comuna</th>
+      <th>Ultima gestion</th>
+      <th>Proxima gestion</th>
+      <th>Convenio</th>
+      <th>Accion</th>
       ${managementDates.map((date) => `<th class="management-date-head">Gestion ${managementDateLabel(date)}</th>`).join("")}
     </tr>
   `;
@@ -627,9 +745,12 @@ function executiveFilter(debtor) {
     || (agreementFilter === "without" && !agreement)
     || (agreement && agreement.type === agreementFilter);
   const debtorAssignment = debtor.asignacion || debtor.usuario || debtor.equipo || "";
+  const sessionAssignment = normalizeText(session?.assignmentName || "");
+  const matchesSessionAssignment = session?.role !== "ejecutivo"
+    || (sessionAssignment && normalizeText(debtorAssignment) === sessionAssignment);
   const matchesAssignment = !assignment || debtorAssignment === assignment;
   const matchesDebt = (!minDebt || debtor.deudaTotal >= minDebt) && (!maxDebt || debtor.deudaTotal <= maxDebt);
-  return matchesQuery && (!state || displayState(debtor) === state) && matchesContact && matchesRecent && matchesAge && matchesAgreement && matchesAssignment && matchesDebt;
+  return matchesSessionAssignment && matchesQuery && (!state || displayState(debtor) === state) && matchesContact && matchesRecent && matchesAge && matchesAgreement && matchesAssignment && matchesDebt;
 }
 
 function sortedExecutiveDebtors() {
@@ -669,12 +790,12 @@ function renderExecutiveRows() {
   const managementDates = visibleManagementDates();
   renderExecutiveHead(managementDates);
   if ($("executiveTable")) {
-    $("executiveTable").style.minWidth = `${1120 + (managementDates.length * 170)}px`;
+    $("executiveTable").style.minWidth = `${1560 + (managementDates.length * 170)}px`;
   }
   executiveRows = sortedExecutiveDebtors();
   $("executiveRows").innerHTML = executiveRows.slice(0, 350).map((d, index) => `
     <tr data-index="${index}" class="${rowClass(d)} ${isCampaignExcluded(d) ? "campaign-excluded-row" : ""} ${selectedDebtor?.id === d.id ? "selected-row" : ""}">
-      <td>
+      <td class="sticky-col">
         <div class="name-cell">
           <button type="button" class="exclude-toggle ${isCampaignExcluded(d) ? "active" : ""}" data-debtor-id="${escapeAttr(d.id)}" data-row-index="${index}" title="${isCampaignExcluded(d) ? "Incluir en masivos" : "Excluir de masivos"} · Shift marca rango">${isCampaignExcluded(d) ? "X" : ""}</button>
           <div>
@@ -683,12 +804,17 @@ function renderExecutiveRows() {
         </div>
       </td>
       <td>${d.rutTitular || d.rutDeudor}</td>
+      <td><strong>${d.nombreAlumno || "Sin alumno"}</strong><br><span class="muted">${d.rutAlumno || ""}</span></td>
+      <td>${fmtMoney.format(d.deudaTotal || d.saldoCapital)}</td>
       <td>${statusPill(d)}</td>
-      <td>${fmtMoney.format(d.saldoCapital)}</td>
-      <td><strong>${getOfferAmount(d) ? fmtMoney.format(getOfferAmount(d)) : "Sin convenio"}</strong></td>
-      <td>${contactLabel(d)}</td>
-      <td>${managementSummary(d)}</td>
+      <td>${escapeHtml(assignmentName(d))}</td>
+      <td>${escapeHtml(primaryPhone(d) || "Sin telefono")}</td>
+      <td>${escapeHtml(primaryEmail(d) || "Sin correo")}</td>
+      <td>${escapeHtml(d.comuna || "Sin comuna")}</td>
       <td>${lastManagementAgeLabel(d)}</td>
+      <td>${d.proximaGestion || "-"}</td>
+      <td><strong>${getOfferAmount(d) ? fmtMoney.format(getOfferAmount(d)) : "Sin convenio"}</strong></td>
+      <td><button type="button" class="sheet-action" data-open-debtor="${escapeAttr(d.id)}">Ver</button></td>
       ${managementDates.map((date) => `<td class="management-date-cell">${managementDateSummary(d, date)}</td>`).join("")}
     </tr>
   `).join("");
@@ -765,8 +891,21 @@ function contactLabel(debtor) {
   return parts.join(" / ") || "Sin datos";
 }
 
+function assignmentName(debtor) {
+  return debtor.asignacion || debtor.usuario || debtor.equipo || "Sin asignacion";
+}
+
+function primaryPhone(debtor) {
+  return (debtor.telefonos || []).find((phone) => !isIgnoredContact(debtor, "telefono", phone)) || debtor.telefonos?.[0] || "";
+}
+
+function primaryEmail(debtor) {
+  return (debtor.correos || []).find((email) => !isIgnoredContact(debtor, "correo", email)) || debtor.correos?.[0] || "";
+}
+
 function renderExecutiveDetail() {
   const d = selectedDebtor;
+  document.querySelector("#executiveHome .workbench")?.classList.toggle("detail-collapsed", !d);
   if (!d) {
     setText("execSelectedStatus", "Seleccione deudor");
     if ($("selectedCommentIcon")) $("selectedCommentIcon").hidden = true;
@@ -1719,6 +1858,400 @@ async function saveDebtorReceipt(event) {
   renderDebtorUploads();
 }
 
+function assignmentGroups(debtors = data.debtors) {
+  return Object.entries(debtors.reduce((acc, debtor) => {
+    const key = assignmentName(debtor);
+    if (!acc[key]) acc[key] = { count: 0, saldoCapital: 0, deudaTotal: 0, withContact: 0 };
+    acc[key].count += 1;
+    acc[key].saldoCapital += Number(debtor.saldoCapital || 0);
+    acc[key].deudaTotal += Number(debtor.deudaTotal || 0);
+    if ((debtor.telefonos || []).length || (debtor.correos || []).length) acc[key].withContact += 1;
+    return acc;
+  }, {})).sort((a, b) => b[1].deudaTotal - a[1].deudaTotal);
+}
+
+function renderInformaticoHome() {
+  const totalDebt = data.debtors.reduce((sum, debtor) => sum + Number(debtor.deudaTotal || 0), 0);
+  const noContact = data.debtors.filter((debtor) => !(debtor.telefonos || []).length && !(debtor.correos || []).length).length;
+  const groups = assignmentGroups();
+  setText("itKpiTotal", fmtNum.format(data.debtors.length));
+  setText("itKpiDebt", fmtMoney.format(totalDebt));
+  setText("itKpiExecutives", fmtNum.format(groups.length));
+  setText("itKpiNoContact", fmtNum.format(noContact));
+  renderBars("itOperationalBars", [
+    ["Total cartera", data.debtors.length],
+    ["Con telefono", data.debtors.filter((d) => d.telefonos.length).length],
+    ["Con correo", data.debtors.filter((d) => d.correos.length).length],
+    ["Sin contacto", noContact],
+    ["Con convenio local", Object.keys(store.agreements).length],
+  ]);
+  renderBars("itAssignmentBars", groups.slice(0, 12).map(([name, row]) => [name, row.count]));
+  $("itChecklist").innerHTML = [
+    ["Supabase fuente de verdad", "API server-side activa para cartera y deudores."],
+    ["Preview antes de importar", "Pantalla creada; falta conectar apply transaccional."],
+    ["Auditoria", "Eventos locales visibles y migracion SQL preparada."],
+    ["Reasignaciones", "UI lista; debe conectarse a endpoint definitivo."],
+    ["Call center", "Tabla compacta y panel oculto por defecto."],
+    ["RLS/permisos", "Migracion base agregada; validar en Supabase."],
+  ].map(([title, body]) => `<article class="check-item"><strong>${title}</strong><span>${body}</span></article>`).join("");
+  renderRecentAudit("itRecentAudit", 6);
+}
+
+function filteredInformaticoDebtors() {
+  const state = $("itStateFilter")?.value || "";
+  const assignment = $("itAssignmentFilter")?.value || "";
+  const minDebt = parseMoney($("itDebtMin")?.value || "");
+  const maxDebt = parseMoney($("itDebtMax")?.value || "");
+  const query = normalizeText($("itSearch")?.value || "");
+  return data.debtors.filter((debtor) => {
+    const text = normalizeText([
+      debtor.rutDeudor, debtor.rutTitular, debtor.rutAlumno,
+      debtor.nombreTitular, debtor.nombreAlumno, debtor.estado,
+      debtor.comuna, debtor.region, debtor.rol, debtor.tribunal,
+      assignmentName(debtor),
+    ].join(" "));
+    return (!state || displayState(debtor) === state)
+      && (!assignment || assignmentName(debtor) === assignment)
+      && (!minDebt || Number(debtor.deudaTotal || 0) >= minDebt)
+      && (!maxDebt || Number(debtor.deudaTotal || 0) <= maxDebt)
+      && (!query || text.includes(query));
+  }).sort((a, b) => Number(b.deudaTotal || 0) - Number(a.deudaTotal || 0));
+}
+
+function renderInformaticoPortfolio() {
+  const rows = filteredInformaticoDebtors().slice(0, 800);
+  $("itPortfolioRows").innerHTML = rows.length ? rows.map((debtor) => `
+    <tr>
+      <td><strong>${escapeHtml(debtor.rutTitular || debtor.rutDeudor || "")}</strong><br><span class="muted">${escapeHtml(debtor.rutAlumno || "")}</span></td>
+      <td>${escapeHtml(debtor.nombreTitular || "Sin titular")}</td>
+      <td>${escapeHtml(debtor.nombreAlumno || "Sin alumno")}</td>
+      <td>${fmtMoney.format(debtor.deudaTotal || debtor.saldoCapital || 0)}</td>
+      <td>${statusPill(debtor)}</td>
+      <td>${escapeHtml(assignmentName(debtor))}</td>
+      <td>${escapeHtml(primaryPhone(debtor) || "Sin telefono")}</td>
+      <td>${escapeHtml(primaryEmail(debtor) || "Sin correo")}</td>
+      <td>${escapeHtml(debtor.comuna || "")}</td>
+      <td>${escapeHtml(debtor.rol || "")}</td>
+      <td>${escapeHtml(debtor.tribunal || "")}</td>
+      <td>${lastManagementAgeLabel(debtor)}</td>
+      <td><button type="button" class="sheet-action" data-it-open="${escapeAttr(debtor.id)}">Ver detalle</button></td>
+    </tr>
+  `).join("") : `<tr><td colspan="13">Sin registros para los filtros seleccionados.</td></tr>`;
+  document.querySelectorAll("[data-it-open]").forEach((btn) => btn.addEventListener("click", () => {
+    selectedDebtor = data.debtors.find((debtor) => debtor.id === btn.dataset.itOpen) || null;
+    showView("executiveHome");
+    renderExecutiveRows();
+    renderExecutiveDetail();
+  }));
+}
+
+function renderInformaticoImport() {
+  if (!$("itImportPreviewRows")?.innerHTML) {
+    $("itImportPreviewRows").innerHTML = `<tr><td colspan="3">Seleccione un archivo para generar preview. Esta accion no modifica datos.</td></tr>`;
+  }
+}
+
+async function previewInformaticoImport(event) {
+  event.preventDefault();
+  const file = $("itImportFile").files[0];
+  if (!file) {
+    $("itImportStatus").innerHTML = `<div class="detail-empty">Seleccione un archivo Excel o CSV.</div>`;
+    return;
+  }
+  if (!window.XLSX) {
+    $("itImportStatus").innerHTML = `<div class="detail-empty">No se pudo cargar XLSX. Revise conexion o suba CSV.</div>`;
+    return;
+  }
+  const workbook = window.XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
+  const sheetName = workbook.SheetNames.find((name) => /base|hoja|cartera/i.test(name)) || workbook.SheetNames[0];
+  const rows = window.XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: "" });
+  const headers = rows.length ? Object.keys(rows[0]) : [];
+  const summary = buildImportPreviewSummary(rows, headers);
+  const mode = $("itImportMode").value;
+  const forcedAssignment = $("itForceAssignment").value.trim();
+  const reason = $("itImportReason").value.trim() || "Preview importacion cartera";
+  $("itImportStatus").innerHTML = `<div class="history-item"><strong>${escapeHtml(file.name)}</strong><br>Preview generado para hoja ${escapeHtml(sheetName)}. Modo: ${escapeHtml(mode)}. No se aplicaron cambios.</div>`;
+  $("itImportPreviewRows").innerHTML = [
+    ["Archivo", file.name, `${fmtNum.format(file.size)} bytes`],
+    ["Hoja", sheetName, `${fmtNum.format(rows.length)} filas leidas`],
+    ["Columnas", fmtNum.format(headers.length), headers.slice(0, 12).join(", ")],
+    ["RUT/id_rem detectados", fmtNum.format(summary.matchableRows), `${fmtNum.format(summary.invalidRows)} filas sin llave clara`],
+    ["Deudores nuevos probables", fmtNum.format(summary.newRows), "Comparado contra cartera cargada en pantalla"],
+    ["Deudores existentes probables", fmtNum.format(summary.existingRows), "Match por id_rem/RUT titular/RUT alumno/RUT deudor"],
+    ["Contactos detectados", `${fmtNum.format(summary.phoneCells)} telefonos / ${fmtNum.format(summary.emailCells)} correos`, "Se deben normalizar y deduplicar al aplicar"],
+    ["Reasignaciones probables", fmtNum.format(summary.assignmentChanges), forcedAssignment ? `Forzar a ${forcedAssignment}` : "Segun columna asignacion"],
+    ["Motivo", reason, "Debe guardarse en import_jobs.options al aplicar"],
+  ].map(([a, b, c]) => `<tr><td>${escapeHtml(a)}</td><td><strong>${escapeHtml(b)}</strong></td><td>${escapeHtml(c)}</td></tr>`).join("");
+  pushAudit("preview_import", "import_job", file.name, { mode, sheetName, rows: rows.length, forcedAssignment, reason });
+  renderInformaticoAudit();
+  renderInformaticoHome();
+}
+
+function buildImportPreviewSummary(rows, headers) {
+  const existingKeys = new Set(data.debtors.flatMap((debtor) => [
+    debtor.id,
+    normalizeRut(debtor.rutDeudor),
+    normalizeRut(debtor.rutTitular),
+    normalizeRut(debtor.rutAlumno),
+  ].filter(Boolean)));
+  const phoneHeaders = headers.filter((header) => /^telefono_/i.test(normalizeHeader(header)) || normalizeHeader(header).includes("telefono"));
+  const emailHeaders = headers.filter((header) => /^correo_/i.test(normalizeHeader(header)) || normalizeHeader(header).includes("correo"));
+  let matchableRows = 0;
+  let invalidRows = 0;
+  let existingRows = 0;
+  let newRows = 0;
+  let phoneCells = 0;
+  let emailCells = 0;
+  let assignmentChanges = 0;
+  rows.forEach((row) => {
+    const key = importRowKey(row);
+    if (key) matchableRows += 1;
+    else invalidRows += 1;
+    if (key && existingKeys.has(key)) existingRows += 1;
+    else if (key) newRows += 1;
+    phoneCells += phoneHeaders.filter((header) => String(row[header] || "").trim()).length;
+    emailCells += emailHeaders.filter((header) => String(row[header] || "").trim()).length;
+    const assignment = String(rowValue(row, ["asignacion", "usuario", "equipo"]) || "").trim();
+    if (key && assignment) {
+      const debtor = findDebtorByImportKey(key);
+      if (debtor && assignmentName(debtor) !== assignment) assignmentChanges += 1;
+    }
+  });
+  return { matchableRows, invalidRows, existingRows, newRows, phoneCells, emailCells, assignmentChanges };
+}
+
+function importRowKey(row) {
+  const idRem = String(rowValue(row, ["id_rem", "id"]) || "").trim();
+  if (idRem) return idRem;
+  return normalizeRut(rowValue(row, ["rut_deudor", "rut deudor"]))
+    || normalizeRut(rowValue(row, ["rut_titular", "rut titular"]))
+    || normalizeRut(rowValue(row, ["rut_alumno", "rut alumno"]));
+}
+
+function findDebtorByImportKey(key) {
+  const clean = normalizeRut(key);
+  return data.debtors.find((debtor) => debtor.id === key
+    || normalizeRut(debtor.rutDeudor) === clean
+    || normalizeRut(debtor.rutTitular) === clean
+    || normalizeRut(debtor.rutAlumno) === clean);
+}
+
+function renderInformaticoAssignments() {
+  const groups = assignmentGroups();
+  $("itAssignmentSummary").innerHTML = groups.slice(0, 14).map(([name, row]) => `
+    <div class="bar-row">
+      <span>${escapeHtml(name)}</span>
+      <div class="bar-track"><div class="bar-fill" style="width:${Math.max(5, row.count / Math.max(groups[0]?.[1].count || 1, 1) * 100)}%"></div></div>
+      <strong>${fmtNum.format(row.count)}</strong>
+    </div>
+  `).join("") || `<div class="detail-empty">Sin asignaciones detectadas.</div>`;
+}
+
+function saveInformaticoAssignment(event) {
+  event.preventDefault();
+  const key = $("itAssignmentKey").value.trim();
+  const target = $("itAssignmentTarget").value.trim();
+  const reason = $("itAssignmentReason").value.trim();
+  const debtor = findDebtorByImportKey(key);
+  if (!key || !target || !debtor) {
+    $("itAssignmentStatus").innerHTML = `<div class="detail-empty">Ingrese una llave valida y un asignado destino.</div>`;
+    return;
+  }
+  const previous = assignmentName(debtor);
+  debtor.asignacion = target;
+  debtor.updatedAt = new Date().toISOString();
+  pushAudit("assignment_change", "debtor", debtor.id, { previous, next: target, reason });
+  $("itAssignmentStatus").innerHTML = `<div class="history-item"><strong>${escapeHtml(debtor.nombreTitular || debtor.id)}</strong><br>Reasignado de ${escapeHtml(previous)} a ${escapeHtml(target)}. Pendiente de persistir via API oficial.</div>`;
+  renderInformaticoAssignments();
+  renderInformaticoPortfolio();
+  renderInformaticoAudit();
+  renderExecutiveRows();
+}
+
+function pushAudit(action, entityType, entityId, payload = {}) {
+  store.audit.unshift({
+    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    action,
+    entityType,
+    entityId,
+    payload,
+    user: session?.username || "sistema",
+    role: session?.role || "sin_sesion",
+    createdAt: new Date().toISOString(),
+  });
+  writeJson("abg_audit", store.audit);
+}
+
+function renderRecentAudit(targetId, limit = 20) {
+  const rows = store.audit.slice(0, limit);
+  $(targetId).innerHTML = rows.length ? rows.map((row) => `
+    <div class="history-item"><strong>${escapeHtml(row.action)}</strong><br>${new Date(row.createdAt).toLocaleString("es-CL")} - ${escapeHtml(row.entityType)} ${escapeHtml(row.entityId || "")}</div>
+  `).join("") : `<div class="detail-empty">Sin eventos de auditoria local.</div>`;
+}
+
+function renderInformaticoAudit() {
+  $("itAuditRows").innerHTML = store.audit.length ? store.audit.map((row) => `
+    <tr>
+      <td>${new Date(row.createdAt).toLocaleString("es-CL")}</td>
+      <td>${escapeHtml(row.user || "")}<br><span class="muted">${escapeHtml(row.role || "")}</span></td>
+      <td>${escapeHtml(row.action)}</td>
+      <td>${escapeHtml(row.entityType)}<br><span class="muted">${escapeHtml(row.entityId || "")}</span></td>
+      <td><code>${escapeHtml(JSON.stringify(row.payload || {}))}</code></td>
+    </tr>
+  `).join("") : `<tr><td colspan="5">Sin eventos registrados.</td></tr>`;
+}
+
+function renderInformaticoUsers() {
+  const users = store.internalUsers.slice().sort((a, b) => String(a.role).localeCompare(String(b.role)) || String(a.username).localeCompare(String(b.username)));
+  $("itUsersRows").innerHTML = users.length ? users.map((user) => {
+    const metrics = assignmentMetrics(user.assignmentName);
+    return `
+    <tr>
+      <td><strong>${escapeHtml(user.username)}</strong><br><span class="muted">${escapeHtml(user.displayName || "")}</span></td>
+      <td>${escapeHtml(user.role)}</td>
+      <td>${escapeHtml(user.assignmentName || "-")}</td>
+      <td>${fmtNum.format(metrics.count)} casos<br><span class="muted">${fmtMoney.format(metrics.deudaTotal)}</span></td>
+      <td>${user.active ? statusPillFromState("Activo") : statusPillFromState("Inactivo")}</td>
+      <td><input data-user-password="${escapeAttr(user.id)}" type="password" placeholder="Nueva contrasena"></td>
+      <td class="user-actions">
+        <button type="button" class="sheet-action" data-save-user-password="${escapeAttr(user.id)}">Guardar</button>
+        <button type="button" class="danger-soft" data-toggle-user="${escapeAttr(user.id)}">${user.active ? "Desactivar" : "Activar"}</button>
+      </td>
+    </tr>
+  `;
+  }).join("") : `<tr><td colspan="7">Sin usuarios sincronizados desde Supabase.</td></tr>`;
+  document.querySelectorAll("[data-save-user-password]").forEach((btn) => btn.addEventListener("click", saveInternalUserPassword));
+  document.querySelectorAll("[data-toggle-user]").forEach((btn) => btn.addEventListener("click", toggleInternalUserActive));
+}
+
+function assignmentMetrics(assignment) {
+  if (!assignment) return { count: 0, deudaTotal: 0 };
+  return data.debtors.filter((debtor) => normalizeText(assignmentName(debtor)) === normalizeText(assignment))
+    .reduce((acc, debtor) => {
+      acc.count += 1;
+      acc.deudaTotal += Number(debtor.deudaTotal || 0);
+      return acc;
+    }, { count: 0, deudaTotal: 0 });
+}
+
+async function saveInternalUserProfile(event) {
+  event.preventDefault();
+  const username = normalizeUsername($("itUserUsername").value);
+  const displayName = $("itUserDisplayName").value.trim();
+  const role = $("itUserRole").value;
+  const assignment = $("itUserAssignment").value.trim();
+  const password = $("itUserPassword").value;
+  if (!username || !password) {
+    $("itUserStatus").innerHTML = `<div class="detail-empty">Usuario y contrasena son obligatorios.</div>`;
+    return;
+  }
+  try {
+    const json = await internalUsersApi("save", {
+      user: {
+        username,
+        password,
+        role,
+        displayName: displayName || username,
+        assignmentName: role === "callcenter" ? assignment : "",
+        active: true,
+      },
+    });
+    const saved = json.user;
+    const index = store.internalUsers.findIndex((item) => item.id === saved.id || item.username === saved.username);
+    if (index >= 0) store.internalUsers[index] = saved;
+    else store.internalUsers.push(saved);
+    pushAudit("internal_user_save", "app_user", saved.username, { role: saved.role, assignmentName: saved.assignmentName });
+    $("itUserForm").reset();
+    $("itUserStatus").innerHTML = `<div class="history-item"><strong>${escapeHtml(saved.username)}</strong><br>Perfil guardado en Supabase. Si es call center, vera solo la asignacion ${escapeHtml(saved.assignmentName || "-")}.</div>`;
+    renderInformaticoUsers();
+    renderInformaticoAudit();
+  } catch (error) {
+    $("itUserStatus").innerHTML = `<div class="detail-empty">No se guardo el perfil. Supabase/API respondio: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function saveInternalUserPassword(event) {
+  const id = event.currentTarget.dataset.saveUserPassword;
+  const user = store.internalUsers.find((item) => item.id === id);
+  const input = document.querySelector(`[data-user-password="${CSS.escape(id)}"]`);
+  const password = input?.value || "";
+  if (!user || !password) return;
+  try {
+    const json = await internalUsersApi("save", {
+      user: {
+        username: user.username,
+        password,
+        role: user.role,
+        displayName: user.displayName,
+        assignmentName: user.assignmentName,
+        active: user.active,
+      },
+    });
+    Object.assign(user, json.user || {});
+    pushAudit("internal_user_password_change", "app_user", user.username, { role: user.role });
+    $("itUserStatus").innerHTML = `<div class="history-item"><strong>${escapeHtml(user.username)}</strong><br>Contrasena actualizada en Supabase.</div>`;
+    renderInformaticoUsers();
+    renderInformaticoAudit();
+  } catch (error) {
+    $("itUserStatus").innerHTML = `<div class="detail-empty">No se actualizo la contrasena: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function toggleInternalUserActive(event) {
+  const id = event.currentTarget.dataset.toggleUser;
+  const user = store.internalUsers.find((item) => item.id === id);
+  if (!user || user.system) {
+    $("itUserStatus").innerHTML = `<div class="detail-empty">Los usuarios administrativos base no se pueden desactivar desde la pagina.</div>`;
+    return;
+  }
+  try {
+    const json = await internalUsersApi("toggle", { id: user.id, active: !user.active });
+    Object.assign(user, json.user || {});
+    pushAudit("internal_user_toggle", "app_user", user.username, { active: user.active });
+    $("itUserStatus").innerHTML = `<div class="history-item"><strong>${escapeHtml(user.username)}</strong><br>Estado actualizado en Supabase.</div>`;
+    renderInformaticoUsers();
+    renderInformaticoAudit();
+  } catch (error) {
+    $("itUserStatus").innerHTML = `<div class="detail-empty">No se actualizo el estado: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function createMissingExecutiveProfiles() {
+  const groups = assignmentGroups().map(([name]) => name).filter((name) => name && name !== "Sin asignacion");
+  let created = 0;
+  let failed = 0;
+  for (const assignment of groups) {
+    const username = assignmentUsername(assignment);
+    if (store.internalUsers.some((user) => normalizeUsername(user.username) === username)) continue;
+    try {
+      const json = await internalUsersApi("save", {
+        user: {
+          username,
+          password: "Cambiar123",
+          role: "callcenter",
+          displayName: assignment,
+          assignmentName: assignment,
+          active: true,
+        },
+      });
+      store.internalUsers.push(json.user);
+      created += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+  pushAudit("internal_users_bulk_create", "app_user", "callcenter_profiles", { created, failed });
+  $("itUserStatus").innerHTML = `<div class="history-item"><strong>Perfiles creados en Supabase: ${fmtNum.format(created)}</strong><br>Fallidos: ${fmtNum.format(failed)}. Contrasena temporal: Cambiar123. Informatico debe cambiarla antes de entregar cada acceso.</div>`;
+  renderInformaticoUsers();
+  renderInformaticoAudit();
+}
+
+function renderInformaticoReports() {
+  const groups = assignmentGroups();
+  renderBars("itExecutiveDebtBars", groups.slice(0, 12).map(([name, row]) => [name, row.deudaTotal]), fmtMoney.format);
+  renderBars("itContactabilityBars", groups.slice(0, 12).map(([name, row]) => [name, row.count ? Math.round((row.withContact / row.count) * 100) : 0]), (value) => `${value}%`);
+}
+
 function filteredReportEntries() {
   const from = $("reportFrom").value;
   const to = $("reportTo").value;
@@ -2201,6 +2734,25 @@ function bindEvents() {
     $("agreementStateFilter").value = "";
     renderAgreementRegistry();
   });
+  ["itStateFilter", "itAssignmentFilter", "itDebtMin", "itDebtMax", "itSearch"].forEach((id) => $(id)?.addEventListener("input", renderInformaticoPortfolio));
+  ["itDebtMin", "itDebtMax"].forEach((id) => $(id)?.addEventListener("blur", (event) => {
+    const amount = parseMoney(event.currentTarget.value);
+    event.currentTarget.value = amount ? fmtMoney.format(amount) : "";
+    renderInformaticoPortfolio();
+  }));
+  $("clearItFilters")?.addEventListener("click", () => {
+    $("itStateFilter").value = "";
+    $("itAssignmentFilter").value = "";
+    $("itDebtMin").value = "";
+    $("itDebtMax").value = "";
+    $("itSearch").value = "";
+    renderInformaticoPortfolio();
+  });
+  $("itImportForm")?.addEventListener("submit", previewInformaticoImport);
+  $("itAssignmentForm")?.addEventListener("submit", saveInformaticoAssignment);
+  $("itUserForm")?.addEventListener("submit", saveInternalUserProfile);
+  $("itCreateMissingExecutives")?.addEventListener("click", createMissingExecutiveProfiles);
+  $("itSyncUsers")?.addEventListener("click", () => syncInternalUsersFromApi(true));
 }
 
 bindEvents();

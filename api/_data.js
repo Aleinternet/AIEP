@@ -1,5 +1,6 @@
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const crypto = require("crypto");
 
 function requireSupabaseEnv() {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
@@ -9,6 +10,20 @@ function requireSupabaseEnv() {
 
 function normalizeRut(value = "") {
   return String(value).replace(/[^0-9Kk]/g, "").toUpperCase();
+}
+
+function normalizeUsername(value = "") {
+  return String(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, ".")
+    .replace(/^\.+|\.+$/g, "");
+}
+
+function hashPassword(password, salt) {
+  return crypto.createHash("sha256").update(`${salt}:${password}`).digest("hex");
 }
 
 async function supabaseFetch(path, options = {}) {
@@ -108,7 +123,7 @@ function buildSummary(debtors) {
     montoOferta,
     comision25SobreOferta: Math.round(montoOferta * 0.25),
     estados: countPairs(debtors, (row) => row.estado),
-    ejecutivos: [],
+    ejecutivos: countPairs(debtors, (row) => row.asignacion || row.usuario || row.equipo).slice(0, 30),
     regiones: countPairs(debtors, (row) => row.region).slice(0, 10),
     contactabilidad: {
       conCorreo: debtors.filter((row) => row.correos.length).length,
@@ -119,8 +134,16 @@ function buildSummary(debtors) {
   };
 }
 
-async function loadPortfolio() {
-  const debtRows = await supabaseFetchAll("debtors?select=*&order=deuda_total.desc,id.asc");
+function portfolioPathForRole({ role, username, assignment } = {}) {
+  const base = "debtors?select=*&order=deuda_total.desc,id.asc";
+  if (role !== "callcenter") return base;
+  const visibleAssignment = assignment || username;
+  if (!visibleAssignment || visibleAssignment === "callcenter") return base;
+  return `${base}&or=(asignacion.eq.${encodeURIComponent(visibleAssignment)},usuario.eq.${encodeURIComponent(visibleAssignment)},equipo.eq.${encodeURIComponent(visibleAssignment)})`;
+}
+
+async function loadPortfolio(context = {}) {
+  const debtRows = await supabaseFetchAll(portfolioPathForRole(context));
   const contacts = await supabaseFetchAll("contacts?select=debtor_id,type,value&order=debtor_id.asc,type.asc,value.asc");
   const contactsByDebtor = new Map();
   for (const contact of contacts) {
@@ -156,7 +179,33 @@ async function loadDebtorByRut(rut) {
   return mapDebtor(debtor, contacts);
 }
 
+async function loadInternalUser(username, password) {
+  const normalized = normalizeUsername(username);
+  if (!normalized || !password) return null;
+  const query = new URLSearchParams({
+    select: "id,username,display_name,role,assignment_name,active,password_hash,password_salt",
+    username: `eq.${normalized}`,
+    limit: "1",
+  });
+  const rows = await supabaseFetch(`app_users?${query.toString()}`).catch(() => []);
+  const user = rows[0];
+  if (!user || user.active === false || !user.password_hash || !user.password_salt) return null;
+  const incomingHash = hashPassword(password, user.password_salt);
+  if (incomingHash !== user.password_hash) return null;
+  return {
+    id: user.id,
+    username: user.username,
+    displayName: user.display_name,
+    role: user.role,
+    assignmentName: user.assignment_name || "",
+  };
+}
+
 module.exports = {
   loadPortfolio,
   loadDebtorByRut,
+  loadInternalUser,
+  hashPassword,
+  normalizeUsername,
+  supabaseFetch,
 };
