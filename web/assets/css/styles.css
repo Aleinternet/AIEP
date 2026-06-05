@@ -93,6 +93,7 @@ h3 { margin: 18px 0 10px; font-size: 15px; }
 label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; }
 label input, label select, label textarea, .toolbar select { border: 1px solid var(--line); border-radius: 6px; padding: 10px; color: var(--ink); background: #fff; min-width: 0; }
 textarea { resize: vertical; }
+.wide-textarea { width: 100%; min-height: 160px; margin-top: 10px; font-family: Consolas, monospace; white-space: pre; }
 .campaign-panel { border: 1px solid var(--line); border-radius: 6px; background: #f8fafc; padding: 12px; margin-bottom: 14px; }
 .campaign-head { display: flex; justify-content: space-between; gap: 12px; align-items: start; margin-bottom: 10px; }
 .campaign-head h3 { margin: 0 0 4px; }

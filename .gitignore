@@ -23,6 +23,7 @@ cloud/drive-sync-python/ejecutar_setup_drive_oauth*.ps1*
 cloud/supabase/seed/*.csv
 cloud/supabase/seed/*.xlsx
 cloud/supabase/seed/*.json
+cloud/supabase/private/
 web/data/app-data.js
 *.xlsx
 *.xls

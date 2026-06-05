@@ -2220,14 +2220,16 @@ async function createMissingExecutiveProfiles() {
   const groups = assignmentGroups().map(([name]) => name).filter((name) => name && name !== "Sin asignacion");
   let created = 0;
   let failed = 0;
+  const credentials = [];
   for (const assignment of groups) {
     const username = assignmentUsername(assignment);
     if (store.internalUsers.some((user) => normalizeUsername(user.username) === username)) continue;
+    const password = generateTemporaryPassword();
     try {
       const json = await internalUsersApi("save", {
         user: {
           username,
-          password: "Cambiar123",
+          password,
           role: "callcenter",
           displayName: assignment,
           assignmentName: assignment,
@@ -2235,15 +2237,24 @@ async function createMissingExecutiveProfiles() {
         },
       });
       store.internalUsers.push(json.user);
+      credentials.push({ username, password, assignment });
       created += 1;
     } catch {
       failed += 1;
     }
   }
   pushAudit("internal_users_bulk_create", "app_user", "callcenter_profiles", { created, failed });
-  $("itUserStatus").innerHTML = `<div class="history-item"><strong>Perfiles creados en Supabase: ${fmtNum.format(created)}</strong><br>Fallidos: ${fmtNum.format(failed)}. Contrasena temporal: Cambiar123. Informatico debe cambiarla antes de entregar cada acceso.</div>`;
+  const csv = credentials.map((item) => `${item.username};${item.password};${item.assignment}`).join("\n");
+  $("itUserStatus").innerHTML = `<div class="history-item"><strong>Perfiles creados en Supabase: ${fmtNum.format(created)}</strong><br>Fallidos: ${fmtNum.format(failed)}. Guarde estas contrasenas ahora; despues solo podran cambiarse, no consultarse.<br><textarea readonly class="wide-textarea">${escapeHtml(`usuario;contrasena;asignacion\n${csv}`)}</textarea></div>`;
   renderInformaticoUsers();
   renderInformaticoAudit();
+}
+
+function generateTemporaryPassword() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  const bytes = new Uint32Array(10);
+  crypto.getRandomValues(bytes);
+  return `Aiep-${Array.from(bytes, (value) => chars[value % chars.length]).join("")}`;
 }
 
 function renderInformaticoReports() {
