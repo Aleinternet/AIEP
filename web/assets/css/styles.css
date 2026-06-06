@@ -95,6 +95,15 @@ label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; }
 label input, label select, label textarea, .toolbar select { border: 1px solid var(--line); border-radius: 6px; padding: 10px; color: var(--ink); background: #fff; min-width: 0; }
 textarea { resize: vertical; }
 .wide-textarea { width: 100%; min-height: 160px; margin-top: 10px; font-family: Consolas, monospace; white-space: pre; }
+.icon-button { min-width: 34px; padding: 7px 9px; border-radius: 6px; border: 1px solid var(--line); background: #f8fafc; color: var(--ink); }
+.icon-button:hover { background: #eef6f4; border-color: var(--brand); color: var(--brand-strong); }
+.password-cell { display: inline-block; min-width: 82px; font-family: Consolas, monospace; }
+.editing-row { background: #fffdf2; }
+.editing-row input, .editing-row select { width: 100%; border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+.technical-detail { margin-top: 14px; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius); background: #fff; }
+.technical-detail.detail-empty { color: var(--muted); background: #f8fafc; }
+.compact-head { margin-bottom: 10px; }
+.technical-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .campaign-panel { border: 1px solid var(--line); border-radius: 6px; background: #f8fafc; padding: 12px; margin-bottom: 14px; }
 .campaign-head { display: flex; justify-content: space-between; gap: 12px; align-items: start; margin-bottom: 10px; }
 .campaign-head h3 { margin: 0 0 4px; }
@@ -336,7 +345,7 @@ code { white-space: pre-wrap; overflow-wrap: anywhere; color: #334155; }
 
 @media (max-width: 620px) {
   .app { padding: 18px; }
-  .nav, .form-grid, .form-grid.stacked, .debtor-grid, .contact-score, .campaign-grid, .contact-meta, .legal-grid, .bank-edit-grid, .checklist-grid { grid-template-columns: 1fr; }
+  .nav, .form-grid, .form-grid.stacked, .debtor-grid, .contact-score, .campaign-grid, .contact-meta, .legal-grid, .bank-edit-grid, .checklist-grid, .technical-grid { grid-template-columns: 1fr; }
   .bar-row, .file-row { grid-template-columns: 1fr; display: grid; }
 }
 

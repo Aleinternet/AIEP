@@ -44,6 +44,7 @@ jobs:
         id: preflight
         env:
           GOOGLE_DRIVE_AIEP_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_AIEP_FOLDER_ID || '1VzcG1kLr9noQR9UPvzRVZAU2peWwLe1i' }}
+          GOOGLE_SHEETS_AIEP_BASE_ID: ${{ secrets.GOOGLE_SHEETS_AIEP_BASE_ID || '1JLprSdfbtg2MdPZbjQklsuvWcb4Vz696uTll0laGnFw' }}
           GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL || 'aiep-drive@aiep-496715.iam.gserviceaccount.com' }}
           GOOGLE_PRIVATE_KEY: ${{ secrets.GOOGLE_PRIVATE_KEY }}
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
@@ -135,10 +136,11 @@ jobs:
           response.raise_for_status()
           PY
 
-      - name: Importar archivos pendientes
+      - name: Importar Google Sheets base
         if: steps.schedule_gate.outputs.run_import == 'true' && steps.preflight.outputs.ready == 'true'
         env:
           GOOGLE_DRIVE_AIEP_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_AIEP_FOLDER_ID || '1VzcG1kLr9noQR9UPvzRVZAU2peWwLe1i' }}
+          GOOGLE_SHEETS_AIEP_BASE_ID: ${{ secrets.GOOGLE_SHEETS_AIEP_BASE_ID || '1JLprSdfbtg2MdPZbjQklsuvWcb4Vz696uTll0laGnFw' }}
           GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL || 'aiep-drive@aiep-496715.iam.gserviceaccount.com' }}
           GOOGLE_PRIVATE_KEY: ${{ secrets.GOOGLE_PRIVATE_KEY }}
           GOOGLE_AUTH_MODE: service_account
@@ -147,4 +149,4 @@ jobs:
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: python cloud/drive-sync-python/import_pending.py
+        run: python cloud/drive-sync-python/import_base_sheet.py

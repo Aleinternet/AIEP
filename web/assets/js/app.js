@@ -57,6 +57,8 @@ let campaignSkippedByRules = 0;
 let campaignSkippedDuplicateContacts = 0;
 let lastExcludeIndex = null;
 let whatsappWindow = null;
+let visibleUserPasswords = new Set();
+let editingInternalUsers = new Set();
 
 function applyRemoteData(remote) {
   if (!remote) return;
@@ -143,13 +145,7 @@ viewByRoute["callcenter/validacion"] = "executiveValidation";
 views.informatico = [
   { id: "informaticoHome", label: "Dashboard TI" },
   { id: "informaticoPortfolio", label: "Cartera total" },
-  { id: "executiveHome", label: "Ficha deudor" },
-  { id: "informaticoImport", label: "Importar" },
-  { id: "informaticoAssignments", label: "Reasignaciones" },
-  { id: "informaticoAudit", label: "Auditoria" },
   { id: "informaticoUsers", label: "Usuarios" },
-  { id: "informaticoReports", label: "Reportes" },
-  { id: "localFiles", label: "Repositorio" },
 ];
 Object.assign(titles, {
   informaticoHome: "Dashboard informatico",
@@ -223,16 +219,29 @@ async function internalUsersApi(action, payload = {}) {
 
 async function syncInternalUsersFromApi(showStatus = true) {
   try {
-    const json = await internalUsersApi("list");
+    const json = await sheetsUsersApi("sync");
     store.internalUsers = json.users || [];
-    if (showStatus) $("itUserStatus").innerHTML = `<div class="history-item"><strong>Usuarios sincronizados desde Supabase</strong><br>${fmtNum.format(json.users?.length || 0)} perfiles recibidos.</div>`;
+    if (showStatus) $("itUserStatus").innerHTML = `<div class="history-item"><strong>Usuarios sincronizados desde Google Sheets</strong><br>${fmtNum.format(json.users?.length || 0)} asignados recibidos desde AIEP_BASE_TOTAL.</div>`;
     renderInformaticoUsers();
     return true;
   } catch (error) {
     store.internalUsers = [];
-    if (showStatus) $("itUserStatus").innerHTML = `<div class="detail-empty">No se pudo sincronizar con Supabase. No se permite gestion local de usuarios: ${escapeHtml(error.message)}</div>`;
+    if (showStatus) $("itUserStatus").innerHTML = `<div class="detail-empty">No se pudo sincronizar con Google Sheets/Supabase: ${escapeHtml(error.message)}</div>`;
     return false;
   }
+}
+
+async function sheetsUsersApi(action, payload = {}) {
+  if (!session?.username || !session?.authPassword) throw new Error("Sesion administrativa no disponible.");
+  return requestJson("/api/sheets-users", {
+    method: "POST",
+    body: JSON.stringify({
+      action,
+      adminUser: session.username,
+      adminPass: session.authPassword,
+      ...payload,
+    }),
+  });
 }
 
 function setText(id, value) {
@@ -536,11 +545,7 @@ function login(role, debtor = null, profile = null, password = "") {
   if (role === "informatico") {
     renderInformaticoHome();
     renderInformaticoPortfolio();
-    renderInformaticoImport();
-    renderInformaticoAssignments();
-    renderInformaticoAudit();
     renderInformaticoUsers();
-    renderInformaticoReports();
     syncInternalUsersFromApi(false);
   }
   openRequestedOrDefault();
@@ -1917,12 +1922,12 @@ function renderInformaticoHome() {
   renderBars("itAssignmentBars", groups.slice(0, 12).map(([name, row]) => [name, row.count]));
   renderInformaticoAssignmentMatrix();
   $("itChecklist").innerHTML = [
-    ["Supabase fuente de verdad", "API server-side activa para cartera y deudores."],
-    ["Preview antes de importar", "Pantalla creada; falta conectar apply transaccional."],
-    ["Auditoria", "Eventos locales visibles y migracion SQL preparada."],
-    ["Reasignaciones", "UI lista; debe conectarse a endpoint definitivo."],
-    ["Call center", "Tabla compacta y panel oculto por defecto."],
-    ["RLS/permisos", "Migracion base agregada; validar en Supabase."],
+    ["Google Sheets base", "AIEP_BASE_TOTAL concentra Base y Asignados."],
+    ["Supabase espejo", "La web consulta Supabase sincronizado desde Google Sheets."],
+    ["Usuarios", "Asignados se administran desde la hoja Asignados y esta pantalla."],
+    ["Call center", "Cada ejecutivo ve solo su asignacion vigente."],
+    ["Control TI", "Dashboard y cartera tecnica sin herramientas de cobranza masiva."],
+    ["Sincronizacion", "GitHub Actions importa AIEP_BASE_TOTAL todos los dias a las 08:00 Chile."],
   ].map(([title, body]) => `<article class="check-item"><strong>${title}</strong><span>${body}</span></article>`).join("");
   renderRecentAudit("itRecentAudit", 6);
 }
@@ -1964,15 +1969,49 @@ function renderInformaticoPortfolio() {
       <td>${escapeHtml(debtor.rol || "")}</td>
       <td>${escapeHtml(debtor.tribunal || "")}</td>
       <td>${lastManagementAgeLabel(debtor)}</td>
-      <td><button type="button" class="sheet-action" data-it-open="${escapeAttr(debtor.id)}">Ver detalle</button></td>
+      <td><button type="button" class="sheet-action" data-it-open="${escapeAttr(debtor.id)}">Ver ficha</button></td>
     </tr>
   `).join("") : `<tr><td colspan="13">Sin registros para los filtros seleccionados.</td></tr>`;
   document.querySelectorAll("[data-it-open]").forEach((btn) => btn.addEventListener("click", () => {
     selectedDebtor = data.debtors.find((debtor) => debtor.id === btn.dataset.itOpen) || null;
-    showView("executiveHome");
-    renderExecutiveRows();
-    renderExecutiveDetail();
+    renderInformaticoDebtorTechDetail();
   }));
+  renderInformaticoDebtorTechDetail();
+}
+
+function renderInformaticoDebtorTechDetail() {
+  const target = $("itDebtorTechDetail");
+  if (!target) return;
+  const d = selectedDebtor;
+  if (!d || !data.debtors.some((debtor) => debtor.id === d.id)) {
+    target.className = "technical-detail detail-empty";
+    target.innerHTML = "Seleccione un deudor para ver su ficha tecnica.";
+    return;
+  }
+  target.className = "technical-detail";
+  target.innerHTML = `
+    <div class="panel-head compact-head"><h3>Ficha tecnica deudor</h3><span>${escapeHtml(d.id || "")}</span></div>
+    <div class="technical-grid">
+      ${detailItem("Asignacion", assignmentName(d))}
+      ${detailItem("Estado", displayState(d))}
+      ${detailItem("RUT titular", d.rutTitular || d.rutDeudor)}
+      ${detailItem("Titular", d.nombreTitular)}
+      ${detailItem("RUT alumno", d.rutAlumno)}
+      ${detailItem("Alumno", d.nombreAlumno)}
+      ${detailItem("Cartera", d.cartera)}
+      ${detailItem("Tramo", d.tramo)}
+      ${detailItem("Deuda total", fmtMoney.format(d.deudaTotal || 0))}
+      ${detailItem("Saldo capital", fmtMoney.format(d.saldoCapital || 0))}
+      ${detailItem("Interes mora", fmtMoney.format(d.interes || 0))}
+      ${detailItem("Gasto cobranza", fmtMoney.format(d.gastoCobranza || 0))}
+      ${detailItem("Direccion", d.direccion)}
+      ${detailItem("Comuna / region", [d.comuna, d.region].filter(Boolean).join(" / "))}
+      ${detailItem("Rol judicial", d.rol)}
+      ${detailItem("Tribunal", d.tribunal)}
+      ${detailItem("Correos", (d.correos || []).join(", "))}
+      ${detailItem("Telefonos", (d.telefonos || []).join(", "))}
+    </div>
+  `;
 }
 
 function renderInformaticoImport() {
@@ -2132,26 +2171,50 @@ function renderInformaticoAudit() {
 }
 
 function renderInformaticoUsers() {
-  const users = store.internalUsers.slice().sort((a, b) => String(a.role).localeCompare(String(b.role)) || String(a.username).localeCompare(String(b.username)));
+  const users = store.internalUsers.slice().sort((a, b) => String(a.assignmentName || a.displayName).localeCompare(String(b.assignmentName || b.displayName), "es"));
   $("itUsersRows").innerHTML = users.length ? users.map((user) => {
-    const metrics = assignmentMetrics(user.assignmentName);
+    const key = user.username || user.id;
+    const assignment = user.assignmentName || user.displayName || "";
+    const metrics = assignmentMetrics(assignment);
+    const cases = Number(user.cases || metrics.count || 0);
+    const isEditing = editingInternalUsers.has(key);
+    const showPassword = visibleUserPasswords.has(key);
+    if (isEditing) {
+      return `
+      <tr class="editing-row">
+        <td><strong>${escapeHtml(assignment)}</strong><br><span class="muted">Google Sheets: Asignados</span></td>
+        <td><input data-edit-user="${escapeAttr(key)}" value="${escapeAttr(user.username || "")}"></td>
+        <td><input data-edit-pass="${escapeAttr(key)}" type="${showPassword ? "text" : "password"}" value="${escapeAttr(user.password || "")}"></td>
+        <td>${fmtNum.format(cases)} casos<br><span class="muted">${fmtMoney.format(metrics.deudaTotal)}</span></td>
+        <td>
+          <select data-edit-active="${escapeAttr(key)}">
+            <option value="1"${user.active !== false ? " selected" : ""}>Activo</option>
+            <option value="0"${user.active === false ? " selected" : ""}>Inactivo</option>
+          </select>
+        </td>
+        <td class="user-actions">
+          <button type="button" class="sheet-action" data-save-sheet-user="${escapeAttr(key)}">Guardar</button>
+          <button type="button" data-cancel-user-edit="${escapeAttr(key)}">Cancelar</button>
+        </td>
+      </tr>`;
+    }
     return `
     <tr>
-      <td><strong>${escapeHtml(user.username)}</strong><br><span class="muted">${escapeHtml(user.displayName || "")}</span></td>
-      <td>${escapeHtml(user.role)}</td>
-      <td>${escapeHtml(user.assignmentName || "-")}</td>
-      <td>${fmtNum.format(metrics.count)} casos<br><span class="muted">${fmtMoney.format(metrics.deudaTotal)}</span></td>
+      <td><strong>${escapeHtml(assignment)}</strong><br><span class="muted">${escapeHtml(user.role || "callcenter")}</span></td>
+      <td>${escapeHtml(user.username || "")}</td>
+      <td><span class="password-cell">${showPassword ? escapeHtml(user.password || "") : "••••••"}</span> <button type="button" class="icon-button" title="Mostrar u ocultar contrasena" aria-label="Mostrar u ocultar contrasena" data-toggle-user-password="${escapeAttr(key)}">${showPassword ? "Ocultar" : "&#128065;"}</button></td>
+      <td>${fmtNum.format(cases)} casos<br><span class="muted">${fmtMoney.format(metrics.deudaTotal)}</span></td>
       <td>${user.active ? statusPillFromState("Activo") : statusPillFromState("Inactivo")}</td>
-      <td><input data-user-password="${escapeAttr(user.id)}" type="password" placeholder="Nueva contrasena"></td>
       <td class="user-actions">
-        <button type="button" class="sheet-action" data-save-user-password="${escapeAttr(user.id)}">Guardar</button>
-        <button type="button" class="danger-soft" data-toggle-user="${escapeAttr(user.id)}">${user.active ? "Desactivar" : "Activar"}</button>
+        <button type="button" class="sheet-action" data-edit-user-row="${escapeAttr(key)}">Modificar</button>
       </td>
     </tr>
   `;
-  }).join("") : `<tr><td colspan="7">Sin usuarios sincronizados desde Supabase.</td></tr>`;
-  document.querySelectorAll("[data-save-user-password]").forEach((btn) => btn.addEventListener("click", saveInternalUserPassword));
-  document.querySelectorAll("[data-toggle-user]").forEach((btn) => btn.addEventListener("click", toggleInternalUserActive));
+  }).join("") : `<tr><td colspan="6">Sin usuarios sincronizados desde Google Sheets.</td></tr>`;
+  document.querySelectorAll("[data-toggle-user-password]").forEach((btn) => btn.addEventListener("click", toggleUserPasswordVisibility));
+  document.querySelectorAll("[data-edit-user-row]").forEach((btn) => btn.addEventListener("click", startInternalUserEdit));
+  document.querySelectorAll("[data-cancel-user-edit]").forEach((btn) => btn.addEventListener("click", cancelInternalUserEdit));
+  document.querySelectorAll("[data-save-sheet-user]").forEach((btn) => btn.addEventListener("click", saveInternalUserSheetRow));
 }
 
 function assignmentMetrics(assignment) {
@@ -2247,33 +2310,56 @@ async function toggleInternalUserActive(event) {
 }
 
 async function createMissingExecutiveProfiles() {
-  const groups = assignmentGroups().map(([name]) => name).filter((name) => name && name !== "Sin asignacion");
-  let created = 0;
-  let failed = 0;
-  for (const assignment of groups) {
-    const username = assignmentUsername(assignment);
-    if (store.internalUsers.some((user) => normalizeUsername(user.username) === username)) continue;
-    try {
-      const json = await internalUsersApi("save", {
-        user: {
-          username,
-          password: "123456",
-          role: "callcenter",
-          displayName: assignment,
-          assignmentName: assignment,
-          active: true,
-        },
-      });
-      store.internalUsers.push(json.user);
-      created += 1;
-    } catch {
-      failed += 1;
-    }
-  }
-  pushAudit("internal_users_bulk_create", "app_user", "callcenter_profiles", { created, failed });
-  $("itUserStatus").innerHTML = `<div class="history-item"><strong>Perfiles creados en Supabase: ${fmtNum.format(created)}</strong><br>Fallidos: ${fmtNum.format(failed)}. Clave inicial para todos: 123456. El perfil Informatico puede cambiarla manualmente.</div>`;
-  renderInformaticoUsers();
+  await syncInternalUsersFromApi(true);
+  pushAudit("internal_users_sheet_sync", "google_sheet", "AIEP_BASE_TOTAL", { users: store.internalUsers.length });
   renderInformaticoAudit();
+}
+
+function toggleUserPasswordVisibility(event) {
+  const key = event.currentTarget.dataset.toggleUserPassword;
+  if (visibleUserPasswords.has(key)) visibleUserPasswords.delete(key);
+  else visibleUserPasswords.add(key);
+  renderInformaticoUsers();
+}
+
+function startInternalUserEdit(event) {
+  editingInternalUsers.add(event.currentTarget.dataset.editUserRow);
+  renderInformaticoUsers();
+}
+
+function cancelInternalUserEdit(event) {
+  editingInternalUsers.delete(event.currentTarget.dataset.cancelUserEdit);
+  renderInformaticoUsers();
+}
+
+async function saveInternalUserSheetRow(event) {
+  const key = event.currentTarget.dataset.saveSheetUser;
+  const user = store.internalUsers.find((item) => (item.username || item.id) === key);
+  if (!user) return;
+  const username = document.querySelector(`[data-edit-user="${CSS.escape(key)}"]`)?.value || user.username;
+  const password = document.querySelector(`[data-edit-pass="${CSS.escape(key)}"]`)?.value || user.password || "123456";
+  const active = document.querySelector(`[data-edit-active="${CSS.escape(key)}"]`)?.value !== "0";
+  try {
+    const json = await sheetsUsersApi("save", {
+      user: {
+        username,
+        password,
+        role: user.role || "callcenter",
+        displayName: user.displayName,
+        assignmentName: user.assignmentName || user.displayName,
+        active,
+      },
+    });
+    const saved = json.user;
+    const index = store.internalUsers.findIndex((item) => (item.username || item.id) === key);
+    if (index >= 0) store.internalUsers[index] = saved;
+    editingInternalUsers.delete(key);
+    visibleUserPasswords.add(saved.username);
+    $("itUserStatus").innerHTML = `<div class="history-item"><strong>${escapeHtml(saved.assignmentName || saved.displayName)}</strong><br>Perfil actualizado en Google Sheets y Supabase.</div>`;
+    renderInformaticoUsers();
+  } catch (error) {
+    $("itUserStatus").innerHTML = `<div class="detail-empty">No se guardo el perfil: ${escapeHtml(error.message)}</div>`;
+  }
 }
 
 function renderInformaticoReports() {
