@@ -2176,16 +2176,19 @@ function renderInformaticoUsers() {
     const key = user.username || user.id;
     const assignment = user.assignmentName || user.displayName || "";
     const metrics = assignmentMetrics(assignment);
-    const cases = Number(user.cases || metrics.count || 0);
+    const cases = Number(user.cases ?? metrics.count ?? 0);
+    const debtTotal = Number(user.debtTotal ?? user.deudaTotal ?? metrics.deudaTotal ?? 0);
     const isEditing = editingInternalUsers.has(key);
     const showPassword = visibleUserPasswords.has(key);
+    const passwordText = showPassword ? escapeHtml(user.password || "") : "&bull;&bull;&bull;&bull;&bull;&bull;";
+    const passwordTitle = showPassword ? escapeAttr(user.password || "") : "";
     if (isEditing) {
       return `
       <tr class="editing-row">
         <td><strong>${escapeHtml(assignment)}</strong><br><span class="muted">Google Sheets: Asignados</span></td>
         <td><input data-edit-user="${escapeAttr(key)}" value="${escapeAttr(user.username || "")}"></td>
         <td><input data-edit-pass="${escapeAttr(key)}" type="${showPassword ? "text" : "password"}" value="${escapeAttr(user.password || "")}"></td>
-        <td>${fmtNum.format(cases)} casos<br><span class="muted">${fmtMoney.format(metrics.deudaTotal)}</span></td>
+        <td>${fmtNum.format(cases)} casos<br><span class="muted">${fmtMoney.format(debtTotal)}</span></td>
         <td>
           <select data-edit-active="${escapeAttr(key)}">
             <option value="1"${user.active !== false ? " selected" : ""}>Activo</option>
@@ -2202,8 +2205,8 @@ function renderInformaticoUsers() {
     <tr>
       <td><strong>${escapeHtml(assignment)}</strong><br><span class="muted">${escapeHtml(user.role || "callcenter")}</span></td>
       <td>${escapeHtml(user.username || "")}</td>
-      <td><span class="password-cell">${showPassword ? escapeHtml(user.password || "") : "••••••"}</span> <button type="button" class="icon-button" title="Mostrar u ocultar contrasena" aria-label="Mostrar u ocultar contrasena" data-toggle-user-password="${escapeAttr(key)}">${showPassword ? "Ocultar" : "&#128065;"}</button></td>
-      <td>${fmtNum.format(cases)} casos<br><span class="muted">${fmtMoney.format(metrics.deudaTotal)}</span></td>
+      <td><span class="password-field"><span class="password-cell" title="${passwordTitle}">${passwordText}</span><button type="button" class="icon-button" title="${showPassword ? "Ocultar contrasena" : "Ver contrasena"}" aria-label="${showPassword ? "Ocultar contrasena" : "Ver contrasena"}" data-toggle-user-password="${escapeAttr(key)}">${showPassword ? "&#128274;" : "&#128065;"}</button></span></td>
+      <td>${fmtNum.format(cases)} casos<br><span class="muted">${fmtMoney.format(debtTotal)}</span></td>
       <td>${user.active ? statusPillFromState("Activo") : statusPillFromState("Inactivo")}</td>
       <td class="user-actions">
         <button type="button" class="sheet-action" data-edit-user-row="${escapeAttr(key)}">Modificar</button>

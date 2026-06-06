@@ -1,8 +1,9 @@
 const crypto = require("crypto");
-const { getValues, updateValues, columnLetter } = require("./_google");
+const { batchGetValues, getValues, updateValues, columnLetter } = require("./_google");
 const { hashPassword, loadInternalUser, normalizeUsername, supabaseFetch } = require("./_data");
 
-const SPREADSHEET_ID = process.env.GOOGLE_SHEETS_AIEP_BASE_ID || "1JLprSdfbtg2MdPZbjQklsuvWcb4Vz696uTll0laGnFw";
+const SPREADSHEET_ID = (process.env.GOOGLE_SHEETS_AIEP_BASE_ID || "1JLprSdfbtg2MdPZbjQklsuvWcb4Vz696uTll0laGnFw").trim();
+const BASE_SHEET = "Base";
 const ASSIGNED_SHEET = "Asignados";
 const REQUIRED_HEADERS = ["Usuario", "Contrasena", "Rol", "Activo"];
 
@@ -20,11 +21,30 @@ function normalizeHeader(value) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
+    .replace(/\s+/g, " ")
     .trim();
 }
 
 function parseNumber(value) {
   return Number(String(value || "").replace(/[^0-9-]/g, "")) || 0;
+}
+
+function parseMoney(value) {
+  if (typeof value === "number") return Math.round(value);
+  let raw = String(value || "").trim().replace(/\s+/g, "");
+  if (!raw) return 0;
+  if (/,\d{1,2}$/.test(raw)) raw = raw.replace(/,\d{1,2}$/, "");
+  else if (/\.\d{1,2}$/.test(raw) && !/\.\d{3}(\D|$)/.test(raw)) raw = raw.replace(/\.\d{1,2}$/, "");
+  return Number(raw.replace(/[^0-9-]/g, "")) || 0;
+}
+
+function firstHeaderIndex(headers, aliases) {
+  const wanted = new Set(aliases.map(normalizeHeader));
+  return headers.findIndex((header) => wanted.has(normalizeHeader(header)));
+}
+
+function assignmentKey(value) {
+  return normalizeHeader(value);
 }
 
 function normalizeRole(value) {
@@ -53,10 +73,83 @@ function publicUser(row) {
     active: row.active,
     password: row.password,
     cases: row.cases,
+    debtTotal: row.debtTotal || 0,
+    capitalTotal: row.capitalTotal || 0,
     remesas: row.remesas,
     sheetRow: row.sheetRow,
     source: "google_sheets",
   };
+}
+
+async function readBaseMetrics() {
+  const headerRows = await getValues(SPREADSHEET_ID, `${BASE_SHEET}!1:1`);
+  const headers = headerRows[0] || [];
+  if (!headers.length) return new Map();
+
+  const indexes = {
+    id: firstHeaderIndex(headers, ["id", "id rem", "id_rem", "codigo", "operacion", "remesa"]),
+    assignment: firstHeaderIndex(headers, ["asignacion", "asignación", "asignaciÃ³n"]),
+    total: firstHeaderIndex(headers, ["deuda total", "deuda_total", "saldo total pendiente", "total a pagar", "total"]),
+    capital: firstHeaderIndex(headers, ["saldo capital", "saldo_capital", "capital", "monto deuda", "monto_deuda"]),
+    interest: firstHeaderIndex(headers, ["intereses mora", "interes", "interes mora", "intereses_mora"]),
+    expense: firstHeaderIndex(headers, ["gastos cobranza", "gasto cobranza", "gasto_cobranza", "gastos_cobranza"]),
+  };
+  if (indexes.assignment < 0) return new Map();
+
+  const requested = [];
+  const addColumn = (name, index) => {
+    if (index < 0) return;
+    const range = `${BASE_SHEET}!${columnLetter(index)}:${columnLetter(index)}`;
+    if (!requested.some((item) => item.range === range)) requested.push({ name, range });
+  };
+  addColumn("id", indexes.id);
+  addColumn("assignment", indexes.assignment);
+  addColumn("total", indexes.total);
+  addColumn("capital", indexes.capital);
+  addColumn("interest", indexes.interest);
+  addColumn("expense", indexes.expense);
+
+  const values = await batchGetValues(SPREADSHEET_ID, requested.map((item) => item.range));
+  const columns = {};
+  requested.forEach((item, index) => {
+    columns[item.name] = (values[index] || []).map((row) => row[0] || "");
+  });
+
+  const maxRows = Math.max(...Object.values(columns).map((col) => col.length), 0);
+  const metrics = new Map();
+  const seenDebtors = new Set();
+  for (let rowIndex = 1; rowIndex < maxRows; rowIndex += 1) {
+    const assignment = String(columns.assignment?.[rowIndex] || "").trim();
+    if (!assignment) continue;
+    const id = String(columns.id?.[rowIndex] || "").trim();
+    const seenKey = id || `${assignment}|${rowIndex}`;
+    if (id && seenDebtors.has(seenKey)) continue;
+    if (id) seenDebtors.add(seenKey);
+
+    const capital = parseMoney(columns.capital?.[rowIndex]);
+    const interest = parseMoney(columns.interest?.[rowIndex]);
+    const expense = parseMoney(columns.expense?.[rowIndex]);
+    const total = parseMoney(columns.total?.[rowIndex]) || capital + interest + expense;
+    const key = assignmentKey(assignment);
+    const current = metrics.get(key) || { count: 0, debtTotal: 0, capitalTotal: 0 };
+    current.count += 1;
+    current.debtTotal += total;
+    current.capitalTotal += capital;
+    metrics.set(key, current);
+  }
+  return metrics;
+}
+
+function applyBaseMetrics(users, metrics) {
+  return users.map((user) => {
+    const metric = metrics.get(assignmentKey(user.assignmentName || user.displayName)) || {};
+    return {
+      ...user,
+      cases: Number(metric.count || user.cases || 0),
+      debtTotal: Number(metric.debtTotal || user.debtTotal || 0),
+      capitalTotal: Number(metric.capitalTotal || user.capitalTotal || 0),
+    };
+  });
 }
 
 function parseSheet(values) {
@@ -147,8 +240,9 @@ async function upsertAppUser(user) {
 
 async function syncUsers() {
   const parsed = await readAssignedSheet();
-  for (const user of parsed.users) await upsertAppUser(user);
-  return parsed.users;
+  const users = applyBaseMetrics(parsed.users, await readBaseMetrics());
+  for (const user of users) await upsertAppUser(user);
+  return users;
 }
 
 async function saveUser(input) {

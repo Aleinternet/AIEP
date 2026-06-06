@@ -12,8 +12,8 @@ function googleCredentials() {
   const rawKey = process.env.GOOGLE_PRIVATE_KEY;
   if (!email || !rawKey) throw new Error("Faltan GOOGLE_SERVICE_ACCOUNT_EMAIL o GOOGLE_PRIVATE_KEY en Vercel.");
   return {
-    email,
-    privateKey: rawKey.replace(/\\n/g, "\n"),
+    email: email.trim(),
+    privateKey: rawKey.trim().replace(/\\n/g, "\n"),
   };
 }
 
@@ -77,6 +77,13 @@ async function getValues(spreadsheetId, range) {
   return json.values || [];
 }
 
+async function batchGetValues(spreadsheetId, ranges) {
+  const params = new URLSearchParams({ valueRenderOption: "FORMATTED_VALUE" });
+  for (const range of ranges) params.append("ranges", range);
+  const json = await sheetsRequest(`${spreadsheetId}/values:batchGet?${params.toString()}`);
+  return (json.valueRanges || []).map((item) => item.values || []);
+}
+
 async function updateValues(spreadsheetId, range, values) {
   return sheetsRequest(`${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`, {
     method: "PUT",
@@ -96,6 +103,7 @@ function columnLetter(index) {
 }
 
 module.exports = {
+  batchGetValues,
   getValues,
   updateValues,
   columnLetter,
