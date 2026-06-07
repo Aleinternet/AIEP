@@ -42,6 +42,8 @@ const store = {
   bankRows: readJson("abg_bank_rows", []),
   audit: readJson("abg_audit", []),
   internalUsers: [],
+  health: null,
+  healthLoading: false,
 };
 
 let session = null;
@@ -102,6 +104,24 @@ async function loadPortfolioFromApi(user, pass) {
 async function loadDebtorFromApi(rut) {
   const json = await requestJson(`/api/debtor?rut=${encodeURIComponent(rut)}`);
   return mergeDebtor(json.debtor);
+}
+
+async function loadHealthFromApi() {
+  store.healthLoading = true;
+  renderHealthChecklist();
+  try {
+    store.health = await requestJson("/api/health");
+  } catch (error) {
+    store.health = {
+      ok: false,
+      status: "bad",
+      checkedAt: new Date().toISOString(),
+      checks: [{ name: "Health API", status: "bad", detail: error.message || "No se pudo consultar el estado productivo." }],
+    };
+  } finally {
+    store.healthLoading = false;
+    renderHealthChecklist();
+  }
 }
 
 const views = {
@@ -502,6 +522,11 @@ function openRequestedOrDefault() {
   showView(requested && canAccessView(requested) ? requested : defaultViewForRole(session.role));
 }
 
+function applyRoleTheme(role = "") {
+  document.body.classList.remove("role-deudor", "role-ejecutivo", "role-jefatura", "role-informatico");
+  if (role) document.body.classList.add(`role-${role}`);
+}
+
 function renderNav() {
   $("mainNav").innerHTML = views[session.role].map((view, index) => `
     <button class="nav-item ${index === 0 ? "active" : ""}" data-view="${view.id}">${view.label}</button>
@@ -523,6 +548,7 @@ function login(role, debtor = null, profile = null, password = "") {
   sessionStartedAt = new Date();
   selectedDebtor = role === "deudor" ? debtor : null;
   document.body.classList.remove("logged-out");
+  applyRoleTheme(role);
   renderEntryMeta();
   loadIndicators();
   window.setTimeout(() => setText("roleLabel", roleLabel(role, username)), 0);
@@ -607,6 +633,7 @@ function logout() {
   $("loginForm").reset();
   $("internalLoginForm").reset();
   document.body.classList.add("logged-out");
+  applyRoleTheme("");
   history.replaceState(null, "", location.pathname);
 }
 
@@ -1904,6 +1931,39 @@ function renderInformaticoAssignmentMatrix() {
   `).join("") : `<tr><td colspan="${matrix.remesas.length + 2}">Sin asignaciones cargadas desde cartera.</td></tr>`;
 }
 
+function healthFallbackChecks() {
+  return [
+    { name: "Google Drive", status: "loading", detail: "Verificando carpeta AIEP y permisos de cuenta de servicio." },
+    { name: "Google Sheets", status: "loading", detail: "Verificando AIEP_BASE_TOTAL / Asignados." },
+    { name: "Supabase", status: "loading", detail: "Verificando API REST y tabla debtors." },
+    { name: "Vercel", status: "loading", detail: "Verificando funcion serverless publicada." },
+    { name: "GitHub", status: "loading", detail: "Verificando repositorio Aleinternet/AIEP." },
+  ];
+}
+
+function healthStatusText(status) {
+  if (status === "ok") return "Funcionando";
+  if (status === "warn") return "Revision";
+  if (status === "bad") return "Falla";
+  return "Cargando";
+}
+
+function renderHealthChecklist() {
+  const root = $("itChecklist");
+  if (!root) return;
+  const checks = store.health?.checks?.length ? store.health.checks : healthFallbackChecks();
+  root.innerHTML = checks.map((check) => {
+    const status = check.status || "loading";
+    return `
+      <article class="check-item check-${escapeAttr(status)}">
+        <span class="check-state">${healthStatusText(status)}</span>
+        <strong>${escapeHtml(check.name)}</strong>
+        <span>${escapeHtml(check.detail || "")}</span>
+      </article>
+    `;
+  }).join("");
+}
+
 function renderInformaticoHome() {
   const totalDebt = data.debtors.reduce((sum, debtor) => sum + Number(debtor.deudaTotal || 0), 0);
   const noContact = data.debtors.filter((debtor) => !(debtor.telefonos || []).length && !(debtor.correos || []).length).length;
@@ -1921,14 +1981,8 @@ function renderInformaticoHome() {
   ]);
   renderBars("itAssignmentBars", groups.slice(0, 12).map(([name, row]) => [name, row.count]));
   renderInformaticoAssignmentMatrix();
-  $("itChecklist").innerHTML = [
-    ["Google Sheets base", "AIEP_BASE_TOTAL concentra Base y Asignados."],
-    ["Supabase espejo", "La web consulta Supabase sincronizado desde Google Sheets."],
-    ["Usuarios", "Asignados se administran desde la hoja Asignados y esta pantalla."],
-    ["Call center", "Cada ejecutivo ve solo su asignacion vigente."],
-    ["Control TI", "Dashboard y cartera tecnica sin herramientas de cobranza masiva."],
-    ["Sincronizacion", "GitHub Actions importa AIEP_BASE_TOTAL todos los dias a las 08:00 Chile."],
-  ].map(([title, body]) => `<article class="check-item"><strong>${title}</strong><span>${body}</span></article>`).join("");
+  renderHealthChecklist();
+  if (!store.health && !store.healthLoading) loadHealthFromApi();
   renderRecentAudit("itRecentAudit", 6);
 }
 
@@ -1969,7 +2023,7 @@ function renderInformaticoPortfolio() {
       <td>${escapeHtml(debtor.rol || "")}</td>
       <td>${escapeHtml(debtor.tribunal || "")}</td>
       <td>${lastManagementAgeLabel(debtor)}</td>
-      <td><button type="button" class="sheet-action" data-it-open="${escapeAttr(debtor.id)}">Ver ficha</button></td>
+      <td class="it-action-col"><button type="button" class="sheet-action" data-it-open="${escapeAttr(debtor.id)}">Ver ficha</button></td>
     </tr>
   `).join("") : `<tr><td colspan="13">Sin registros para los filtros seleccionados.</td></tr>`;
   document.querySelectorAll("[data-it-open]").forEach((btn) => btn.addEventListener("click", () => {
@@ -1990,7 +2044,11 @@ function renderInformaticoDebtorTechDetail() {
   }
   target.className = "technical-detail";
   target.innerHTML = `
-    <div class="panel-head compact-head"><h3>Ficha tecnica deudor</h3><span>${escapeHtml(d.id || "")}</span></div>
+    <div class="panel-head compact-head">
+      <h3>Ficha tecnica deudor</h3>
+      <span>${escapeHtml(d.id || "")}</span>
+      <button type="button" class="sheet-action" data-it-close-detail>Cerrar ficha</button>
+    </div>
     <div class="technical-grid">
       ${detailItem("Asignacion", assignmentName(d))}
       ${detailItem("Estado", displayState(d))}
@@ -2012,6 +2070,10 @@ function renderInformaticoDebtorTechDetail() {
       ${detailItem("Telefonos", (d.telefonos || []).join(", "))}
     </div>
   `;
+  target.querySelector("[data-it-close-detail]")?.addEventListener("click", () => {
+    selectedDebtor = null;
+    renderInformaticoDebtorTechDetail();
+  });
 }
 
 function renderInformaticoImport() {

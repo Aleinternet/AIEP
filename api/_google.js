@@ -1,7 +1,8 @@
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
+const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.metadata.readonly";
 
-let cachedToken = null;
+const cachedTokens = new Map();
 
 function base64Url(input) {
   return Buffer.from(input).toString("base64url");
@@ -17,7 +18,8 @@ function googleCredentials() {
   };
 }
 
-async function googleAccessToken() {
+async function googleAccessToken(scope = SHEETS_SCOPE) {
+  const cachedToken = cachedTokens.get(scope);
   if (cachedToken && cachedToken.expiresAt > Date.now() + 60000) return cachedToken.accessToken;
 
   const crypto = require("crypto");
@@ -26,7 +28,7 @@ async function googleAccessToken() {
   const header = { alg: "RS256", typ: "JWT" };
   const claim = {
     iss: email,
-    scope: SHEETS_SCOPE,
+    scope,
     aud: GOOGLE_TOKEN_URL,
     exp: now + 3600,
     iat: now,
@@ -49,11 +51,11 @@ async function googleAccessToken() {
   const json = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(json.error_description || json.error || `Google token HTTP ${response.status}`);
 
-  cachedToken = {
+  cachedTokens.set(scope, {
     accessToken: json.access_token,
     expiresAt: Date.now() + Number(json.expires_in || 3600) * 1000,
-  };
-  return cachedToken.accessToken;
+  });
+  return json.access_token;
 }
 
 async function sheetsRequest(path, options = {}) {
@@ -104,7 +106,10 @@ function columnLetter(index) {
 
 module.exports = {
   batchGetValues,
+  DRIVE_SCOPE,
+  SHEETS_SCOPE,
   getValues,
+  googleAccessToken,
   updateValues,
   columnLetter,
 };
