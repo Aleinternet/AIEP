@@ -29,7 +29,9 @@ DEFAULT_KEY_FILE = ROOT / "aiep-496715-c806474bf4f6.json"
 ROOT_FOLDER_ID = os.getenv("GOOGLE_DRIVE_AIEP_FOLDER_ID") or "1VzcG1kLr9noQR9UPvzRVZAU2peWwLe1i"
 KEY_FILE = Path(os.getenv("GOOGLE_SERVICE_ACCOUNT_KEY_FILE", str(DEFAULT_KEY_FILE))).resolve()
 TOKEN_FILE = Path(os.getenv("GOOGLE_OAUTH_TOKEN_FILE", str(Path(__file__).resolve().parent / "oauth-token.json"))).resolve()
-SCOPES = ["https://www.googleapis.com/auth/drive"]
+DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"]
+SHEETS_SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+SCOPES = DRIVE_SCOPES
 
 DRIVE_TREE = [
     "00_Config",
@@ -80,12 +82,13 @@ INITIAL_UPLOADS = [
 ]
 
 
-def drive_service():
+def google_credentials(scopes=None):
+    scopes = scopes or DRIVE_SCOPES
     auth_mode = os.getenv("GOOGLE_AUTH_MODE", "").strip().lower()
     oauth_client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
     oauth_client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET")
     oauth_refresh_token = os.getenv("GOOGLE_OAUTH_REFRESH_TOKEN")
-    service_account_email = os.getenv("GOOGLE_SERVICE_ACCOUNT_EMAIL") or "aiep-drive@aiep-496715.iam.gserviceaccount.com"
+    service_account_email = (os.getenv("GOOGLE_SERVICE_ACCOUNT_EMAIL") or "aiep-drive@aiep-496715.iam.gserviceaccount.com").strip()
     service_account_private_key = os.getenv("GOOGLE_PRIVATE_KEY")
 
     if auth_mode == "service_account":
@@ -106,33 +109,46 @@ def drive_service():
             token_uri="https://oauth2.googleapis.com/token",
             client_id=oauth_client_id,
             client_secret=oauth_client_secret,
-            scopes=SCOPES,
+            scopes=scopes,
         )
     elif service_account_email and service_account_private_key:
         credentials = service_account.Credentials.from_service_account_info(
             {
                 "type": "service_account",
                 "client_email": service_account_email,
-                "private_key": service_account_private_key.replace("\\n", "\n"),
+                "private_key": service_account_private_key.strip().replace("\\n", "\n"),
                 "token_uri": "https://oauth2.googleapis.com/token",
             },
-            scopes=SCOPES,
+            scopes=scopes,
         )
     else:
         if not KEY_FILE.exists():
             raise FileNotFoundError(f"No existe llave de servicio: {KEY_FILE}")
         credentials = service_account.Credentials.from_service_account_file(
             str(KEY_FILE),
-            scopes=SCOPES,
+            scopes=scopes,
         )
+    return credentials
+
+
+def google_service(api, version, scopes=None):
+    credentials = google_credentials(scopes)
     try:
         import certifi
         import httplib2
 
         http = AuthorizedHttp(credentials, http=httplib2.Http(ca_certs=certifi.where()))
-        return build("drive", "v3", http=http)
+        return build(api, version, http=http)
     except Exception:
-        return build("drive", "v3", credentials=credentials)
+        return build(api, version, credentials=credentials)
+
+
+def drive_service():
+    return google_service("drive", "v3", DRIVE_SCOPES)
+
+
+def sheets_service():
+    return google_service("sheets", "v4", SHEETS_SCOPES)
 
 
 def find_child_folder(service, parent_id, name):

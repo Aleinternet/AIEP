@@ -1,17 +1,17 @@
 import hashlib
-import io
 import os
 import re
 import secrets
 from datetime import datetime, timezone
 
-import openpyxl
-
 from import_pending import dedupe_by, map_contacts, map_debtor, normalize_header, supabase_upsert
-from setup_drive import drive_service
+from setup_drive import sheets_service
 
 
-BASE_SHEET_ID = os.getenv("GOOGLE_SHEETS_AIEP_BASE_ID") or "1JLprSdfbtg2MdPZbjQklsuvWcb4Vz696uTll0laGnFw"
+BASE_SHEET_ID = (os.getenv("GOOGLE_SHEETS_AIEP_BASE_ID") or "1JLprSdfbtg2MdPZbjQklsuvWcb4Vz696uTll0laGnFw").strip()
+BASE_SHEET_NAME = "Base"
+ASSIGNED_SHEET_NAME = "Asignados"
+READ_CHUNK_SIZE = int(os.getenv("GOOGLE_SHEETS_READ_CHUNK_SIZE", "5000"))
 
 
 def normalize_username(value):
@@ -27,25 +27,58 @@ def hash_password(password, salt):
     return hashlib.sha256(f"{salt}:{password}".encode("utf-8")).hexdigest()
 
 
-def download_workbook():
-    service = drive_service()
-    request = service.files().export_media(
-        fileId=BASE_SHEET_ID,
-        mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
-    return request.execute()
+def column_letter(index):
+    value = index + 1
+    output = ""
+    while value > 0:
+        value, mod = divmod(value - 1, 26)
+        output = chr(65 + mod) + output
+    return output
 
 
-def sheet_rows(workbook, sheet_name):
-    sheet = workbook[sheet_name]
-    rows = list(sheet.iter_rows(values_only=True))
-    if not rows:
-        return []
-    headers = [str(header or "").strip() for header in rows[0]]
-    return [
-        {headers[index]: value for index, value in enumerate(row) if index < len(headers)}
-        for row in rows[1:]
-    ]
+def sheet_range(sheet_name, a1_range):
+    escaped = sheet_name.replace("'", "''")
+    return f"'{escaped}'!{a1_range}"
+
+
+def get_values(service, sheet_name, a1_range):
+    response = service.spreadsheets().values().get(
+        spreadsheetId=BASE_SHEET_ID,
+        range=sheet_range(sheet_name, a1_range),
+        valueRenderOption="FORMATTED_VALUE",
+    ).execute()
+    return response.get("values", [])
+
+
+def sheet_rows(sheet_name, chunk_size=READ_CHUNK_SIZE):
+    service = sheets_service()
+    header_values = get_values(service, sheet_name, "1:1")
+    if not header_values:
+        raise RuntimeError(f"AIEP_BASE_TOTAL no tiene encabezados en hoja {sheet_name}")
+    headers = [str(header or "").strip() for header in header_values[0]]
+    last_column = column_letter(len(headers) - 1)
+    rows = []
+    start_row = 2
+
+    while True:
+        end_row = start_row + chunk_size - 1
+        values = get_values(service, sheet_name, f"A{start_row}:{last_column}{end_row}")
+        if not values:
+            break
+        for raw_row in values:
+            if not any(str(cell or "").strip() for cell in raw_row):
+                continue
+            row = {
+                headers[index]: raw_row[index]
+                for index in range(min(len(headers), len(raw_row)))
+                if headers[index]
+            }
+            rows.append(row)
+        if len(values) < chunk_size:
+            break
+        start_row = end_row + 1
+
+    return rows
 
 
 def value(row, name):
@@ -109,12 +142,8 @@ def main():
         if not os.getenv(name):
             raise RuntimeError(f"Falta {name}")
 
-    workbook = openpyxl.load_workbook(io.BytesIO(download_workbook()), data_only=True, read_only=True)
-    if "Base" not in workbook.sheetnames or "Asignados" not in workbook.sheetnames:
-        raise RuntimeError("AIEP_BASE_TOTAL debe tener hojas Base y Asignados")
-
-    debtors, contacts = sync_base(sheet_rows(workbook, "Base"))
-    users = sync_assigned(sheet_rows(workbook, "Asignados"))
+    debtors, contacts = sync_base(sheet_rows(BASE_SHEET_NAME))
+    users = sync_assigned(sheet_rows(ASSIGNED_SHEET_NAME))
     print(f"OK AIEP_BASE_TOTAL importado: {debtors} deudores, {contacts} contactos, {users} perfiles")
 
 
