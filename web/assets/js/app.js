@@ -88,8 +88,28 @@ async function requestJson(url, options = {}) {
     },
   });
   const json = await response.json().catch(() => ({}));
-  if (!response.ok || json.ok === false) throw new Error(json.error || `Error HTTP ${response.status}`);
+  if (!response.ok || json.ok === false) throw new Error(responseErrorMessage(json, response.status));
   return json;
+}
+
+function responseErrorMessage(json = {}, status = 500) {
+  const error = json.error || json.message;
+  if (!error) return `Error HTTP ${status}`;
+  if (typeof error === "string") return error;
+  if (error.message) return error.message;
+  if (error.details) return error.details;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+async function authInternalFromApi(user, pass) {
+  return requestJson("/api/auth", {
+    method: "POST",
+    body: JSON.stringify({ user, pass }),
+  });
 }
 
 async function loadPortfolioFromApi(user, pass) {
@@ -99,6 +119,30 @@ async function loadPortfolioFromApi(user, pass) {
   });
   applyRemoteData(json.data);
   return json;
+}
+
+async function refreshPortfolioFromApi(user, pass) {
+  try {
+    await loadPortfolioFromApi(user, pass);
+    fillFilters();
+    const activeView = document.querySelector(".view.active")?.id;
+    if (activeView && canAccessView(activeView)) showView(activeView);
+  } catch (error) {
+    const message = error.message || "No se pudo cargar cartera desde la nube.";
+    console.error("No se pudo refrescar cartera desde la nube:", message);
+    if (session?.role === "informatico") {
+      store.health = {
+        ok: false,
+        status: "bad",
+        checkedAt: new Date().toISOString(),
+        checks: [
+          { name: "Cartera remota", status: "bad", detail: message },
+          ...healthFallbackChecks(),
+        ],
+      };
+      renderHealthChecklist();
+    }
+  }
 }
 
 async function loadDebtorFromApi(rut) {
@@ -611,8 +655,8 @@ async function handleInternalLogin(event) {
   const pass = $("internalPass").value;
   $("internalLoginError").textContent = "";
   try {
-    $("internalLoginError").textContent = "Validando usuario en la nube...";
-    const json = await loadPortfolioFromApi(user, pass);
+    $("internalLoginError").textContent = "Validando credenciales en la nube...";
+    const json = await authInternalFromApi(user, pass);
     const remoteUser = json.user || {
       username: user,
       displayName: user,
@@ -621,7 +665,8 @@ async function handleInternalLogin(event) {
     };
     const role = roleFromInternalUser(remoteUser);
     $("internalLoginError").textContent = "";
-    return login(role, null, remoteUser, pass);
+    login(role, null, remoteUser, pass);
+    refreshPortfolioFromApi(user, pass);
   } catch (error) {
     $("internalLoginError").textContent = error.message || "No se pudo validar en la nube.";
   }

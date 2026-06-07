@@ -85,8 +85,8 @@ h3 { margin: 18px 0 10px; font-size: 15px; }
 .sidebar-collapsed .brand div, .sidebar-collapsed .nav, .sidebar-collapsed .logout-btn { display: none; }
 .sidebar-collapsed .brand-mark { width: 38px; height: 38px; }
 .brand { display: flex; gap: 12px; align-items: center; }
-.brand-mark { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 8px; background: #fff; color: #fff; font-weight: 800; overflow: hidden; border: 1px solid rgba(255,255,255,.16); }
-.brand-mark img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.brand-mark { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 8px; background: #fff; color: #fff; font-weight: 800; overflow: hidden; border: 1px solid rgba(255,255,255,.16); padding: 2px; }
+.brand-mark img { width: 100%; height: 100%; display: block; object-fit: contain; }
 .brand small { display: block; color: #aeb9c8; margin-top: 3px; }
 .nav { display: grid; gap: 8px; }
 .nav-item, .logout-btn { text-align: left; background: transparent; color: #d8dee9; border-color: transparent; }
