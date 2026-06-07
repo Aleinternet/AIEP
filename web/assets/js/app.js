@@ -653,10 +653,12 @@ async function handleInternalLogin(event) {
   event.preventDefault();
   const user = normalizeUsername($("internalUser").value.trim());
   const pass = $("internalPass").value;
+  const submitButton = event.submitter || $("internalLoginForm").querySelector("button[type='submit']");
   $("internalLoginError").textContent = "";
+  if (submitButton) submitButton.disabled = true;
   try {
-    $("internalLoginError").textContent = "Validando credenciales en la nube...";
-    const json = await authInternalFromApi(user, pass);
+    $("internalLoginError").textContent = "Validando usuario y cargando cartera desde la nube...";
+    const json = await loadPortfolioFromApi(user, pass);
     const remoteUser = json.user || {
       username: user,
       displayName: user,
@@ -665,10 +667,11 @@ async function handleInternalLogin(event) {
     };
     const role = roleFromInternalUser(remoteUser);
     $("internalLoginError").textContent = "";
-    login(role, null, remoteUser, pass);
-    refreshPortfolioFromApi(user, pass);
+    return login(role, null, remoteUser, pass);
   } catch (error) {
     $("internalLoginError").textContent = error.message || "No se pudo validar en la nube.";
+  } finally {
+    if (submitButton) submitButton.disabled = false;
   }
 }
 
