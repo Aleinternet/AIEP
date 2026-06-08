@@ -62,6 +62,9 @@ let lastExcludeIndex = null;
 let whatsappWindow = null;
 let visibleUserPasswords = new Set();
 let editingInternalUsers = new Set();
+let informaticoPortfolioTimer = null;
+let informaticoSearchCache = new Map();
+let informaticoSortedDebtors = null;
 const remoteLoadedDebtors = new Set();
 const remoteLoadingDebtors = new Set();
 
@@ -72,6 +75,7 @@ function applyRemoteData(remote) {
   data.summary = remote.summary || data.summary;
   data.debtors = remote.debtors || [];
   data.bankMovements = remote.bankMovements || [];
+  invalidateInformaticoCaches();
 }
 
 function mergeDebtor(debtor) {
@@ -79,6 +83,7 @@ function mergeDebtor(debtor) {
   const index = data.debtors.findIndex((item) => item.id === debtor.id);
   if (index >= 0) data.debtors[index] = debtor;
   else data.debtors.unshift(debtor);
+  invalidateInformaticoCaches();
   return debtor;
 }
 
@@ -289,7 +294,7 @@ async function syncInternalUsersFromApi(showStatus = true) {
     const json = await sheetsUsersApi("sync");
     store.internalUsers = json.users || [];
     if (showStatus) $("itUserStatus").innerHTML = `<div class="history-item"><strong>Usuarios sincronizados desde Google Sheets</strong><br>${fmtNum.format(json.users?.length || 0)} asignados recibidos desde AIEP_BASE_TOTAL.</div>`;
-    renderInformaticoUsers();
+    if (document.querySelector(".view.active")?.id === "informaticoUsers") renderInformaticoUsers();
     return true;
   } catch (error) {
     store.internalUsers = [];
@@ -555,6 +560,38 @@ function normalizeText(value) {
 
 function normalizeRut(value) {
   return String(value || "").replace(/[.\-\s]/g, "").toUpperCase();
+}
+
+function invalidateInformaticoCaches() {
+  informaticoSearchCache = new Map();
+  informaticoSortedDebtors = null;
+}
+
+function sortedInformaticoDebtors() {
+  if (!informaticoSortedDebtors) {
+    informaticoSortedDebtors = data.debtors.slice().sort((a, b) => Number(b.deudaTotal || 0) - Number(a.deudaTotal || 0));
+  }
+  return informaticoSortedDebtors;
+}
+
+function informaticoSearchText(debtor) {
+  if (informaticoSearchCache.has(debtor.id)) return informaticoSearchCache.get(debtor.id);
+  const rutTerms = [debtor.rutDeudor, debtor.rutTitular, debtor.rutAlumno].map(normalizeRut).filter(Boolean);
+  const text = normalizeText([
+    debtor.id,
+    debtor.rutDeudor, debtor.rutTitular, debtor.rutAlumno,
+    ...rutTerms,
+    debtor.nombreTitular, debtor.nombreAlumno, debtor.estado,
+    debtor.comuna, debtor.region, debtor.rol, debtor.tribunal,
+    assignmentName(debtor),
+  ].join(" "));
+  informaticoSearchCache.set(debtor.id, text);
+  return text;
+}
+
+function scheduleInformaticoPortfolioRender() {
+  window.clearTimeout(informaticoPortfolioTimer);
+  informaticoPortfolioTimer = window.setTimeout(renderInformaticoPortfolio, 180);
 }
 
 function parseMoney(value) {
@@ -832,9 +869,6 @@ function login(role, debtor = null, profile = null, password = "") {
     renderAgreementRegistry();
   }
   if (role === "informatico") {
-    renderInformaticoHome();
-    renderInformaticoPortfolio();
-    renderInformaticoUsers();
     syncInternalUsersFromApi(false);
   }
   openRequestedOrDefault();
@@ -2392,29 +2426,38 @@ function renderInformaticoHome() {
   renderRecentAudit("itRecentAudit", 6);
 }
 
-function filteredInformaticoDebtors() {
+function filteredInformaticoDebtors(limit = 800) {
   const state = $("itStateFilter")?.value || "";
   const assignment = $("itAssignmentFilter")?.value || "";
   const minDebt = parseMoney($("itDebtMin")?.value || "");
   const maxDebt = parseMoney($("itDebtMax")?.value || "");
-  const query = normalizeText($("itSearch")?.value || "");
-  return data.debtors.filter((debtor) => {
-    const text = normalizeText([
-      debtor.rutDeudor, debtor.rutTitular, debtor.rutAlumno,
-      debtor.nombreTitular, debtor.nombreAlumno, debtor.estado,
-      debtor.comuna, debtor.region, debtor.rol, debtor.tribunal,
-      assignmentName(debtor),
-    ].join(" "));
-    return (!state || displayState(debtor) === state)
-      && (!assignment || assignmentName(debtor) === assignment)
-      && (!minDebt || Number(debtor.deudaTotal || 0) >= minDebt)
-      && (!maxDebt || Number(debtor.deudaTotal || 0) <= maxDebt)
-      && (!query || text.includes(query));
-  }).sort((a, b) => Number(b.deudaTotal || 0) - Number(a.deudaTotal || 0));
+  const rawQuery = $("itSearch")?.value || "";
+  const query = normalizeText(rawQuery);
+  const queryRut = normalizeRut(rawQuery);
+  const rows = [];
+  for (const debtor of sortedInformaticoDebtors()) {
+    const debt = Number(debtor.deudaTotal || 0);
+    if (state && displayState(debtor) !== state) continue;
+    if (assignment && assignmentName(debtor) !== assignment) continue;
+    if (minDebt && debt < minDebt) continue;
+    if (maxDebt && debt > maxDebt) continue;
+    if (query) {
+      const text = informaticoSearchText(debtor);
+      if (!text.includes(query) && (!queryRut || !text.includes(queryRut.toLowerCase()))) continue;
+    }
+    rows.push(debtor);
+    if (rows.length >= limit) break;
+  }
+  return rows;
 }
 
 function renderInformaticoPortfolio() {
-  const rows = filteredInformaticoDebtors().slice(0, 800);
+  if (informaticoPortfolioTimer) {
+    window.clearTimeout(informaticoPortfolioTimer);
+    informaticoPortfolioTimer = null;
+  }
+  const hasSearch = Boolean(($("itSearch")?.value || "").trim());
+  const rows = filteredInformaticoDebtors(hasSearch ? 300 : 800);
   $("itPortfolioRows").innerHTML = rows.length ? rows.map((debtor) => `
     <tr>
       <td><strong>${escapeHtml(debtor.rutTitular || debtor.rutDeudor || "")}</strong><br><span class="muted">${escapeHtml(debtor.rutAlumno || "")}</span></td>
@@ -2597,6 +2640,7 @@ function saveInformaticoAssignment(event) {
   const previous = assignmentName(debtor);
   debtor.asignacion = target;
   debtor.updatedAt = new Date().toISOString();
+  invalidateInformaticoCaches();
   pushAudit("assignment_change", "debtor", debtor.id, { previous, next: target, reason });
   $("itAssignmentStatus").innerHTML = `<div class="history-item"><strong>${escapeHtml(debtor.nombreTitular || debtor.id)}</strong><br>Reasignado de ${escapeHtml(previous)} a ${escapeHtml(target)}. Pendiente de persistir via API oficial.</div>`;
   renderInformaticoAssignments();
@@ -3321,7 +3365,7 @@ function bindEvents() {
     $("agreementStateFilter").value = "";
     renderAgreementRegistry();
   });
-  ["itStateFilter", "itAssignmentFilter", "itDebtMin", "itDebtMax", "itSearch"].forEach((id) => $(id)?.addEventListener("input", renderInformaticoPortfolio));
+  ["itStateFilter", "itAssignmentFilter", "itDebtMin", "itDebtMax", "itSearch"].forEach((id) => $(id)?.addEventListener("input", scheduleInformaticoPortfolioRender));
   ["itDebtMin", "itDebtMax"].forEach((id) => $(id)?.addEventListener("blur", (event) => {
     const amount = parseMoney(event.currentTarget.value);
     event.currentTarget.value = amount ? fmtMoney.format(amount) : "";
