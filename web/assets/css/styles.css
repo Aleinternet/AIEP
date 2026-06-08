@@ -327,6 +327,15 @@ td small { display: block; color: var(--muted); margin-top: 4px; }
 .bar-row { display: grid; grid-template-columns: minmax(110px, 180px) 1fr auto; gap: 10px; align-items: center; }
 .bar-track { height: 10px; background: #edf2f7; border-radius: 999px; overflow: hidden; }
 .bar-fill { height: 100%; background: var(--blue); border-radius: inherit; }
+.gauss-chart { display: grid; gap: 8px; }
+.gauss-chart svg { width: 100%; height: auto; display: block; }
+.gauss-bars rect { fill: color-mix(in srgb, var(--accent) 28%, #ffffff); stroke: color-mix(in srgb, var(--accent) 42%, #ffffff); }
+.gauss-line { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.gauss-axis { stroke: var(--line); stroke-width: 1.5; }
+.gauss-mean { stroke: var(--bad); stroke-width: 1.5; stroke-dasharray: 5 5; }
+.gauss-chart text { fill: var(--muted); font-size: 12px; font-weight: 700; }
+.gauss-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.gauss-summary span { padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: #f8fafc; color: var(--muted); font-size: 12px; font-weight: 800; }
 .contact-score { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .contact-score div { padding: 16px; background: #f8fafc; border: 1px solid var(--line); border-radius: 6px; }
 .contact-score strong { display: block; font-size: 26px; }

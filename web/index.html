@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>ABG RECOV | Plataforma Cobranzas AIEP</title>
-    <link rel="stylesheet" href="assets/css/styles.css?v=20260608-callcenter1">
+    <link rel="stylesheet" href="assets/css/styles.css?v=20260608-demo2">
   </head>
   <body class="logged-out">
     <section class="login-screen" id="loginScreen">
@@ -303,6 +303,10 @@
             <div id="topDebtBars" class="bars"></div>
           </section>
           <section class="panel">
+            <div class="panel-head"><h2>Campana de Gauss</h2><span>distribución de deuda total</span></div>
+            <div id="debtBellCurve" class="gauss-chart"></div>
+          </section>
+          <section class="panel">
             <div class="panel-head"><h2>Recaudación por fuente</h2><span>cartola cargada</span></div>
             <div id="bankSourceBars" class="bars"></div>
           </section>
@@ -570,6 +574,6 @@
 
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="data/app-data.js?v=20260604-1"></script>
-    <script src="assets/js/app.js?v=20260608-demo1"></script>
+    <script src="assets/js/app.js?v=20260608-demo2"></script>
   </body>
 </html>

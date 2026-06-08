@@ -79,6 +79,7 @@ function applyRemoteData(remote) {
   data.summary = remote.summary || data.summary;
   data.debtors = remote.debtors || [];
   data.bankMovements = remote.bankMovements || [];
+  data.demoOperations = remote.demoOperations || null;
   data.page = remote.page || null;
   invalidateInformaticoCaches();
 }
@@ -285,13 +286,14 @@ function restorePersistentOperationalStore() {
 }
 
 function resetDemoOperationalStore() {
-  store.entries = [];
+  const ops = data.demoOperations || {};
+  store.entries = Array.isArray(ops.entries) ? ops.entries.slice() : [];
   store.contacts = {};
-  store.files = [];
-  store.offers = {};
-  store.agreements = {};
+  store.files = Array.isArray(ops.files) ? ops.files.slice() : [];
+  store.offers = { ...(ops.offers || {}) };
+  store.agreements = { ...(ops.agreements || {}) };
   store.comments = {};
-  store.bankRows = [];
+  store.bankRows = Array.isArray(ops.bankRows) ? ops.bankRows.slice() : [];
   store.audit = [];
   store.campaignSelected = {};
   store.remoteWarnings = {};
@@ -876,6 +878,71 @@ function renderBars(id, rows, formatter = fmtNum.format) {
     : `<div class="detail-empty">Sin datos para el filtro seleccionado.</div>`;
 }
 
+function renderDebtBellCurve(debtors) {
+  const root = $("debtBellCurve");
+  if (!root) return;
+  const values = debtors.map((debtor) => Number(debtor.deudaTotal || 0)).filter((value) => value > 0);
+  if (values.length < 5) {
+    root.innerHTML = `<div class="detail-empty">Sin datos suficientes para la distribución.</div>`;
+    return;
+  }
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const variance = values.reduce((sum, value) => sum + ((value - mean) ** 2), 0) / values.length;
+  const deviation = Math.sqrt(variance);
+  const bins = 14;
+  const width = Math.max(1, (max - min) / bins);
+  const histogram = Array.from({ length: bins }, (_, index) => ({
+    x: min + (index * width),
+    count: 0,
+  }));
+  values.forEach((value) => {
+    const index = Math.min(bins - 1, Math.floor((value - min) / width));
+    histogram[index].count += 1;
+  });
+  const maxCount = Math.max(...histogram.map((bin) => bin.count), 1);
+  const chartWidth = 640;
+  const chartHeight = 210;
+  const pad = { left: 34, right: 14, top: 18, bottom: 38 };
+  const innerW = chartWidth - pad.left - pad.right;
+  const innerH = chartHeight - pad.top - pad.bottom;
+  const xScale = (value) => pad.left + (((value - min) / Math.max(1, max - min)) * innerW);
+  const yScale = (value) => pad.top + innerH - ((value / maxCount) * innerH);
+  const bars = histogram.map((bin) => {
+    const x = xScale(bin.x);
+    const barW = Math.max(6, innerW / bins - 5);
+    const y = yScale(bin.count);
+    return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${(pad.top + innerH - y).toFixed(1)}" rx="4"></rect>`;
+  }).join("");
+  const normalPoints = Array.from({ length: 80 }, (_, index) => {
+    const value = min + ((max - min) * (index / 79));
+    const density = Math.exp(-0.5 * (((value - mean) / Math.max(1, deviation)) ** 2));
+    const expected = density * maxCount;
+    return `${xScale(value).toFixed(1)},${yScale(expected).toFixed(1)}`;
+  }).join(" ");
+  const low = values.filter((value) => value <= mean - deviation).length;
+  const center = values.filter((value) => value > mean - deviation && value < mean + deviation).length;
+  const high = values.filter((value) => value >= mean + deviation).length;
+  root.innerHTML = `
+    <svg viewBox="0 0 ${chartWidth} ${chartHeight}" role="img" aria-label="Campana de Gauss de deuda total">
+      <line x1="${pad.left}" y1="${pad.top + innerH}" x2="${chartWidth - pad.right}" y2="${pad.top + innerH}" class="gauss-axis"></line>
+      <g class="gauss-bars">${bars}</g>
+      <polyline points="${normalPoints}" class="gauss-line"></polyline>
+      <line x1="${xScale(mean).toFixed(1)}" y1="${pad.top}" x2="${xScale(mean).toFixed(1)}" y2="${pad.top + innerH}" class="gauss-mean"></line>
+      <text x="${pad.left}" y="${chartHeight - 12}">${escapeHtml(fmtMoney.format(min))}</text>
+      <text x="${xScale(mean).toFixed(1)}" y="${chartHeight - 12}" text-anchor="middle">Media ${escapeHtml(fmtMoney.format(mean))}</text>
+      <text x="${chartWidth - pad.right}" y="${chartHeight - 12}" text-anchor="end">${escapeHtml(fmtMoney.format(max))}</text>
+    </svg>
+    <div class="gauss-summary">
+      <span>Bajo: ${fmtNum.format(low)}</span>
+      <span>Zona media: ${fmtNum.format(center)}</span>
+      <span>Alto monto: ${fmtNum.format(high)}</span>
+      <span>Desv.: ${fmtMoney.format(deviation)}</span>
+    </div>
+  `;
+}
+
 function showView(id) {
   if (!canAccessView(id)) id = defaultViewForRole(session?.role);
   document.querySelectorAll(".view").forEach((view) => view.classList.toggle("active", view.id === id));
@@ -1189,7 +1256,7 @@ function executiveFilter(debtor) {
     || (sessionAssignment && normalizeText(debtorAssignment) === sessionAssignment);
   const matchesAssignment = !assignment || debtorAssignment === assignment;
   const matchesDebt = (!minDebt || debtor.deudaTotal >= minDebt) && (!maxDebt || debtor.deudaTotal <= maxDebt);
-  return matchesSessionAssignment && matchesQuery && (!state || displayState(debtor) === state) && matchesContact && matchesRecent && matchesAge && matchesAgreement && matchesAssignment && matchesDebt;
+  return (session?.demo || matchesSessionAssignment) && matchesQuery && (!state || displayState(debtor) === state) && matchesContact && matchesRecent && matchesAge && matchesAgreement && matchesAssignment && matchesDebt;
 }
 
 function sortedExecutiveDebtors() {
@@ -1232,7 +1299,8 @@ function renderExecutiveRows() {
     $("executiveTable").style.minWidth = `${1420 + (managementDates.length * 170)}px`;
   }
   executiveRows = sortedExecutiveDebtors();
-  $("executiveRows").innerHTML = executiveRows.slice(0, 350).map((d, index) => `
+  const visibleRows = session?.demo ? executiveRows : executiveRows.slice(0, 350);
+  $("executiveRows").innerHTML = visibleRows.map((d, index) => `
     <tr data-index="${index}" class="${rowClass(d)} ${isCampaignSelected(d) ? "campaign-selected-row" : ""} ${selectedDebtor?.id === d.id ? "selected-row" : ""}">
       <td class="sticky-col">
         <div class="name-cell">
@@ -1259,7 +1327,7 @@ function renderExecutiveRows() {
   updateSelectionSummary();
   document.querySelectorAll("#executiveRows tr").forEach((row) => {
     row.addEventListener("click", () => {
-      selectedDebtor = executiveRows[Number(row.dataset.index)];
+      selectedDebtor = visibleRows[Number(row.dataset.index)];
       renderExecutiveRows();
       renderExecutiveDetail();
       loadOperationalForDebtor(selectedDebtor);
@@ -3389,6 +3457,7 @@ function renderManagement() {
     ["Comprobantes", receipts.length],
   ]);
   renderBars("topDebtBars", debtors.slice().sort((a, b) => b.deudaTotal - a.deudaTotal).slice(0, 8).map((d) => [d.nombreTitular || d.rutTitular, d.deudaTotal]), fmtMoney.format);
+  renderDebtBellCurve(debtors);
   renderBars("bankSourceBars", bankSourcePairs(), fmtMoney.format);
   renderContactDonut(debtors);
   renderCriticalIndicators(debtors, entries, offerRows, receipts, lostCapital);

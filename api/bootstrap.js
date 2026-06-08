@@ -12,7 +12,7 @@ module.exports = async function handler(req, res) {
     const user = await requireUser(req, ["callcenter", "jefatura", "informatico"]);
     const context = { role: user.role, username: user.username, assignment: user.assignmentName };
     const data = user.demo
-      ? demoPortfolio(user, { limit: 300, offset: 0 })
+      ? demoPortfolio(user, { limit: 1000, offset: 0 })
       : user.role === "informatico"
       ? await loadPortfolioPage(context, { limit: 120, offset: 0 })
       : await loadPortfolio(context);
