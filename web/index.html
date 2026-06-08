@@ -310,22 +310,19 @@
             <div class="panel-head"><h2>Indicadores críticos</h2><span>lectura ejecutiva</span></div>
             <div id="criticalIndicators" class="indicator-grid"></div>
           </section>
-          <section class="panel">
-            <div class="panel-head"><h2>Cartola bancaria</h2><span>carga jefatura</span></div>
-            <form id="bankUploadForm" class="upload-box compact">
-              <label>Subir cartola
-                <input type="file" id="bankStatementFile" accept=".xlsx,.xls,.csv,.txt" required>
-              </label>
-              <button type="submit">Guardar cartola</button>
-            </form>
-            <div id="bankUploadStatus" class="history"></div>
-          </section>
         </div>
       </section>
 
       <section class="view" id="managementBank">
         <div class="panel">
-          <div class="panel-head"><h2>Bandeja de conciliación</h2><span>cartola base y archivos subidos</span></div>
+          <div class="panel-head"><h2>Cartolas bancarias</h2><span>carga, revision y conciliacion</span></div>
+          <form id="bankUploadForm" class="upload-box compact">
+            <label>Subir cartola
+              <input type="file" id="bankStatementFile" accept=".xlsx,.xls,.csv,.txt" required>
+            </label>
+            <button type="submit">Guardar cartola</button>
+          </form>
+          <div id="bankUploadStatus" class="history"></div>
           <div class="table-wrap">
             <table>
               <thead><tr><th>Fecha</th><th>Fuente</th><th>Nombre/RUT</th><th>Monto</th><th>Glosa</th><th>RUT asociado</th><th>Estado</th><th>Accion</th></tr></thead>
@@ -473,20 +470,22 @@
 
       <section class="view" id="informaticoAssignments">
         <div class="panel">
-          <div class="panel-head"><h2>Reasignaciones</h2><span>por RUT/id_rem y ejecutivo</span></div>
+          <div class="panel-head"><h2>Asignaciones</h2><span>reasignacion masiva por RUT/id_rem</span></div>
           <form id="itAssignmentForm" class="form-grid">
-            <label>RUT o id_rem
-              <input id="itAssignmentKey" placeholder="RUT, alumno, titular o id_rem">
+            <label class="wide">RUTs o id_rem a reasignar
+              <textarea id="itAssignmentKeys" rows="9" placeholder="Pegue aqui RUTs desde Excel, separados por saltos de linea, comas o espacios"></textarea>
             </label>
             <label>Nuevo asignado
-              <input id="itAssignmentTarget" placeholder="Nombre ejecutivo">
+              <select id="itAssignmentTarget"><option value="">Seleccione ejecutivo activo</option></select>
             </label>
-            <label class="wide">Motivo
+            <label>Motivo
               <textarea id="itAssignmentReason" rows="3" placeholder="Motivo de reasignacion"></textarea>
             </label>
-            <button type="submit">Registrar reasignacion</button>
+            <button type="button" id="itAssignmentPreview">Previsualizar</button>
+            <button type="submit">Aplicar reasignacion masiva</button>
           </form>
           <div id="itAssignmentStatus" class="history"></div>
+          <div id="itAssignmentPreviewBox" class="history"></div>
           <div id="itAssignmentSummary" class="bars"></div>
         </div>
       </section>
@@ -522,6 +521,25 @@
 
       <section class="view" id="informaticoReports">
         <div class="dashboard-grid">
+          <section class="panel wide">
+            <div class="panel-head"><h2>Vista por gestor</h2><span>gestiones, convenios y recaudacion</span></div>
+            <div class="toolbar">
+              <select id="itManagerFilter"><option value="">Todos los gestores</option></select>
+              <label>Desde<input type="date" id="itManagerFrom"></label>
+              <label>Hasta<input type="date" id="itManagerTo"></label>
+              <button id="itClearManagerFilters" type="button">Limpiar filtros</button>
+            </div>
+            <div class="kpi-grid">
+              <article class="kpi"><span>Casos</span><strong id="itManagerCases">0</strong><small>deudores asignados</small></article>
+              <article class="kpi"><span>Deuda total</span><strong id="itManagerDebt">$0</strong><small>saldo vigente</small></article>
+              <article class="kpi"><span>Gestiones</span><strong id="itManagerEntries">0</strong><small>periodo seleccionado</small></article>
+              <article class="kpi"><span>Convenios</span><strong id="itManagerAgreements">0</strong><small>activos/locales</small></article>
+              <article class="kpi"><span>Recaudado</span><strong id="itManagerCollected">$0</strong><small>validado/conciliado</small></article>
+              <article class="kpi"><span>Llamados</span><strong id="itManagerCalls">0</strong><small>gestiones telefono</small></article>
+              <article class="kpi"><span>WhatsApp</span><strong id="itManagerWhatsapp">0</strong><small>gestiones canal</small></article>
+              <article class="kpi"><span>Correos</span><strong id="itManagerEmails">0</strong><small>gestiones canal</small></article>
+            </div>
+          </section>
           <section class="panel">
             <div class="panel-head"><h2>Ranking por deuda</h2><span>ejecutivos/asignados</span></div>
             <div id="itExecutiveDebtBars" class="bars"></div>
@@ -530,12 +548,29 @@
             <div class="panel-head"><h2>Contactabilidad por asignado</h2><span>calidad de base</span></div>
             <div id="itContactabilityBars" class="bars"></div>
           </section>
+          <section class="panel">
+            <div class="panel-head"><h2>Gestiones por resultado</h2><span>gestor filtrado</span></div>
+            <div id="itManagerResultBars" class="bars"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><h2>Gestiones por canal</h2><span>gestor filtrado</span></div>
+            <div id="itManagerChannelBars" class="bars"></div>
+          </section>
+          <section class="panel wide">
+            <div class="panel-head"><h2>Rendimiento por ejecutivo</h2><span>vista comparativa</span></div>
+            <div class="table-wrap compact-table-wrap">
+              <table>
+                <thead><tr><th>Gestor</th><th>Casos</th><th>Deuda</th><th>Gestiones</th><th>Convenios</th><th>Recaudado</th><th>Contactabilidad</th></tr></thead>
+                <tbody id="itManagerRows"></tbody>
+              </table>
+            </div>
+          </section>
         </div>
       </section>
     </main>
 
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="data/app-data.js?v=20260604-1"></script>
-    <script src="assets/js/app.js?v=20260608-callcenter1"></script>
+    <script src="assets/js/app.js?v=20260608-ti1"></script>
   </body>
 </html>

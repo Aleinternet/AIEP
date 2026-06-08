@@ -182,7 +182,7 @@ async function loadHealthFromApi() {
 const views = {
   deudor: [{ id: "debtorHome", label: "Mi deuda" }, { id: "localFiles", label: "Mis archivos" }],
   ejecutivo: [{ id: "executiveHome", label: "Gestión deudores" }, { id: "localFiles", label: "Comprobantes" }],
-  jefatura: [{ id: "managementHome", label: "Dashboard" }, { id: "managementAgreements", label: "Convenios" }, { id: "managementBank", label: "Conciliación" }, { id: "localFiles", label: "Repositorio" }],
+  jefatura: [{ id: "managementHome", label: "Dashboard" }, { id: "managementAgreements", label: "Convenios" }, { id: "managementBank", label: "Cartolas" }, { id: "localFiles", label: "Repositorio" }],
 };
 
 const titles = {
@@ -220,16 +220,18 @@ viewByRoute["callcenter/validacion"] = "executiveValidation";
 views.informatico = [
   { id: "informaticoHome", label: "Dashboard TI" },
   { id: "informaticoPortfolio", label: "Cartera total" },
+  { id: "informaticoAssignments", label: "Asignaciones" },
+  { id: "informaticoReports", label: "Gestores" },
   { id: "informaticoUsers", label: "Usuarios" },
 ];
 Object.assign(titles, {
   informaticoHome: "Dashboard informatico",
   informaticoPortfolio: "Cartera total",
   informaticoImport: "Importar / actualizar",
-  informaticoAssignments: "Reasignaciones",
+  informaticoAssignments: "Asignaciones",
   informaticoAudit: "Auditoria",
   informaticoUsers: "Usuarios y asignados",
-  informaticoReports: "Reportes informatico",
+  informaticoReports: "Gestores",
 });
 Object.assign(routeByView, {
   informaticoHome: "informatico",
@@ -312,6 +314,18 @@ async function sheetsUsersApi(action, payload = {}) {
     method: "POST",
     body: JSON.stringify({
       action,
+      adminUser: session.username,
+      adminPass: session.authPassword,
+      ...payload,
+    }),
+  });
+}
+
+async function reassignBulkApi(payload = {}) {
+  if (!session?.username || !session?.authPassword) throw new Error("Sesion administrativa no disponible.");
+  return requestJson("/api/reassign-bulk", {
+    method: "POST",
+    body: JSON.stringify({
       adminUser: session.username,
       adminPass: session.authPassword,
       ...payload,
@@ -2775,6 +2789,19 @@ function findDebtorByImportKey(key) {
 
 function renderInformaticoAssignments() {
   const groups = assignmentGroups();
+  const target = $("itAssignmentTarget");
+  if (target) {
+    const activeUsers = store.internalUsers
+      .filter((user) => (user.role === "callcenter" || user.role === "ejecutivo") && user.active !== false)
+      .sort((a, b) => String(a.assignmentName || a.displayName).localeCompare(String(b.assignmentName || b.displayName), "es"));
+    const fallback = groups.map(([name]) => ({ assignmentName: name, displayName: name }));
+    const options = (activeUsers.length ? activeUsers : fallback)
+      .map((user) => user.assignmentName || user.displayName)
+      .filter(Boolean);
+    const current = target.value;
+    target.innerHTML = `<option value="">Seleccione ejecutivo activo</option>${[...new Set(options)].map((name) => `<option value="${escapeAttr(name)}">${escapeHtml(name)}</option>`).join("")}`;
+    target.value = options.includes(current) ? current : "";
+  }
   $("itAssignmentSummary").innerHTML = groups.slice(0, 14).map(([name, row]) => `
     <div class="bar-row">
       <span>${escapeHtml(name)}</span>
@@ -2782,28 +2809,90 @@ function renderInformaticoAssignments() {
       <strong>${fmtNum.format(row.count)}</strong>
     </div>
   `).join("") || `<div class="detail-empty">Sin asignaciones detectadas.</div>`;
+  renderInformaticoAssignmentPreview();
 }
 
-function saveInformaticoAssignment(event) {
-  event.preventDefault();
-  const key = $("itAssignmentKey").value.trim();
-  const target = $("itAssignmentTarget").value.trim();
-  const reason = $("itAssignmentReason").value.trim();
-  const debtor = findDebtorByImportKey(key);
-  if (!key || !target || !debtor) {
-    $("itAssignmentStatus").innerHTML = `<div class="detail-empty">Ingrese una llave valida y un asignado destino.</div>`;
+function parseAssignmentKeys(text = "") {
+  return [...new Set(String(text)
+    .split(/[\s,;|]+/)
+    .map((item) => item.trim())
+    .filter(Boolean))];
+}
+
+function assignmentPreviewRows() {
+  const keys = parseAssignmentKeys($("itAssignmentKeys")?.value || "");
+  const rows = keys.map((key) => {
+    const debtor = findDebtorByImportKey(key);
+    return {
+      key,
+      debtor,
+      valid: Boolean(debtor),
+      current: debtor ? assignmentName(debtor) : "",
+    };
+  });
+  return { keys, rows };
+}
+
+function renderInformaticoAssignmentPreview() {
+  const box = $("itAssignmentPreviewBox");
+  if (!box) return;
+  const target = $("itAssignmentTarget")?.value || "";
+  const { keys, rows } = assignmentPreviewRows();
+  if (!keys.length) {
+    box.innerHTML = `<div class="detail-empty">Pegue RUTs o id_rem para previsualizar la reasignacion.</div>`;
     return;
   }
-  const previous = assignmentName(debtor);
-  debtor.asignacion = target;
-  debtor.updatedAt = new Date().toISOString();
-  invalidateInformaticoCaches();
-  pushAudit("assignment_change", "debtor", debtor.id, { previous, next: target, reason });
-  $("itAssignmentStatus").innerHTML = `<div class="history-item"><strong>${escapeHtml(debtor.nombreTitular || debtor.id)}</strong><br>Reasignado de ${escapeHtml(previous)} a ${escapeHtml(target)}. Pendiente de persistir via API oficial.</div>`;
-  renderInformaticoAssignments();
-  renderInformaticoPortfolio();
-  renderInformaticoAudit();
-  renderExecutiveRows();
+  const validRows = rows.filter((row) => row.valid);
+  const invalidRows = rows.filter((row) => !row.valid);
+  const byCurrent = validRows.reduce((acc, row) => {
+    acc[row.current] = (acc[row.current] || 0) + 1;
+    return acc;
+  }, {});
+  box.innerHTML = `
+    <div class="history-item">
+      <strong>Preview reasignacion</strong><br>
+      Destino: ${escapeHtml(target || "Sin destino seleccionado")}<br>
+      Detectados: ${fmtNum.format(validRows.length)} / ${fmtNum.format(keys.length)} · Invalidos/no encontrados: ${fmtNum.format(invalidRows.length)}
+    </div>
+    <div class="table-wrap compact-table-wrap">
+      <table>
+        <thead><tr><th>Asignacion actual</th><th>Casos</th></tr></thead>
+        <tbody>${Object.entries(byCurrent).map(([name, count]) => `<tr><td>${escapeHtml(name || "Sin asignacion")}</td><td>${fmtNum.format(count)}</td></tr>`).join("") || `<tr><td colspan="2">Sin coincidencias locales.</td></tr>`}</tbody>
+      </table>
+    </div>
+    ${invalidRows.length ? `<div class="detail-empty">No encontrados: ${escapeHtml(invalidRows.slice(0, 30).map((row) => row.key).join(", "))}${invalidRows.length > 30 ? "..." : ""}</div>` : ""}
+  `;
+}
+
+async function saveInformaticoAssignment(event) {
+  event.preventDefault();
+  const keys = parseAssignmentKeys($("itAssignmentKeys").value);
+  const target = $("itAssignmentTarget").value.trim();
+  const reason = $("itAssignmentReason").value.trim();
+  if (!keys.length || !target) {
+    $("itAssignmentStatus").innerHTML = `<div class="detail-empty">Pegue RUTs/id_rem y seleccione un asignado destino.</div>`;
+    return;
+  }
+  $("itAssignmentStatus").innerHTML = `<div class="history-item"><strong>Aplicando reasignacion...</strong><br>Actualizando Google Sheets y Supabase.</div>`;
+  try {
+    const json = await reassignBulkApi({ keys, targetAssignment: target, reason });
+    const updatedIds = new Set((json.updated || []).map((item) => item.id));
+    data.debtors.forEach((debtor) => {
+      if (updatedIds.has(debtor.id)) {
+        debtor.asignacion = target;
+        debtor.updatedAt = new Date().toISOString();
+      }
+    });
+    invalidateInformaticoCaches();
+    pushAudit("assignment_bulk_change", "debtor", "bulk", { target, reason, updated: json.updated?.length || 0, unmatched: json.unmatched?.length || 0 });
+    $("itAssignmentStatus").innerHTML = `<div class="history-item"><strong>Reasignacion aplicada</strong><br>${fmtNum.format(json.updated?.length || 0)} deudores actualizados. Google Sheets: ${fmtNum.format(json.sheetUpdated || 0)} filas. No encontrados: ${fmtNum.format(json.unmatched?.length || 0)}.</div>`;
+    renderInformaticoAssignments();
+    renderInformaticoPortfolio({ skipRemote: true });
+    renderInformaticoAudit();
+    renderExecutiveRows();
+  } catch (error) {
+    $("itAssignmentStatus").innerHTML = `<div class="detail-empty">No se pudo aplicar la reasignacion: ${escapeHtml(error.message)}</div>`;
+  }
 }
 
 function pushAudit(action, entityType, entityId, payload = {}) {
@@ -3036,8 +3125,74 @@ async function saveInternalUserSheetRow(event) {
 
 function renderInformaticoReports() {
   const groups = assignmentGroups();
+  const assignmentSelect = $("itManagerFilter");
+  if (assignmentSelect) {
+    const current = assignmentSelect.value;
+    const options = groups.map(([name]) => name).filter(Boolean);
+    assignmentSelect.innerHTML = `<option value="">Todos los gestores</option>${options.map((name) => `<option value="${escapeAttr(name)}">${escapeHtml(name)}</option>`).join("")}`;
+    assignmentSelect.value = options.includes(current) ? current : "";
+  }
+  const selectedAssignment = $("itManagerFilter")?.value || "";
+  const from = $("itManagerFrom")?.value || "";
+  const to = $("itManagerTo")?.value || "";
+  const selectedDebtors = selectedAssignment
+    ? data.debtors.filter((debtor) => assignmentName(debtor) === selectedAssignment)
+    : data.debtors;
+  const selectedIds = new Set(selectedDebtors.map((debtor) => debtor.id));
+  const entries = store.entries
+    .filter((entry) => selectedIds.has(entry.debtorId))
+    .filter((entry) => (!from || dateOnly(entry.date) >= from) && (!to || dateOnly(entry.date) <= to));
+  const agreements = Object.values(store.agreements).filter((agreement) => selectedIds.has(agreement.debtorId));
+  const filesCollected = store.files
+    .filter((file) => selectedIds.has(file.debtorId) && file.category === "comprobante" && file.status === "validado")
+    .reduce((sum, file) => sum + Number(file.amount || 0), 0);
+  const bankCollected = allBankRows()
+    .filter((row) => ["validado", "conciliado"].includes(row.status))
+    .filter((row) => selectedDebtors.some((debtor) => bankRowMatchesDebtor(row, debtor)))
+    .reduce((sum, row) => sum + Number(row.monto || 0), 0);
+  const channelText = (entry) => String(entry.channel || "").toLowerCase();
+  setText("itManagerCases", fmtNum.format(selectedDebtors.length));
+  setText("itManagerDebt", fmtMoney.format(selectedDebtors.reduce((sum, debtor) => sum + Number(debtor.deudaTotal || debtor.saldoCapital || 0), 0)));
+  setText("itManagerEntries", fmtNum.format(entries.length));
+  setText("itManagerAgreements", fmtNum.format(agreements.length));
+  setText("itManagerCollected", fmtMoney.format(filesCollected + bankCollected));
+  setText("itManagerCalls", fmtNum.format(entries.filter((entry) => channelText(entry).includes("llam")).length));
+  setText("itManagerWhatsapp", fmtNum.format(entries.filter((entry) => channelText(entry).includes("whatsapp")).length));
+  setText("itManagerEmails", fmtNum.format(entries.filter((entry) => channelText(entry).includes("correo") || channelText(entry).includes("mail")).length));
   renderBars("itExecutiveDebtBars", groups.slice(0, 12).map(([name, row]) => [name, row.deudaTotal]), fmtMoney.format);
   renderBars("itContactabilityBars", groups.slice(0, 12).map(([name, row]) => [name, row.count ? Math.round((row.withContact / row.count) * 100) : 0]), (value) => `${value}%`);
+  renderBars("itManagerResultBars", Object.entries(countBy(entries, "result")).sort((a, b) => b[1] - a[1]));
+  renderBars("itManagerChannelBars", Object.entries(countBy(entries, "channel")).sort((a, b) => b[1] - a[1]));
+  const debtorByAssignment = new Map();
+  for (const debtor of data.debtors) {
+    const key = assignmentName(debtor);
+    if (!debtorByAssignment.has(key)) debtorByAssignment.set(key, []);
+    debtorByAssignment.get(key).push(debtor);
+  }
+  const rowsGroups = (selectedAssignment ? groups.filter(([name]) => name === selectedAssignment) : groups).slice(0, 40);
+  $("itManagerRows").innerHTML = rowsGroups.map(([name, row]) => {
+    const debtors = debtorByAssignment.get(name) || [];
+    const ids = new Set(debtors.map((debtor) => debtor.id));
+    const managerEntries = store.entries
+      .filter((entry) => ids.has(entry.debtorId))
+      .filter((entry) => (!from || dateOnly(entry.date) >= from) && (!to || dateOnly(entry.date) <= to));
+    const managerAgreements = Object.values(store.agreements).filter((agreement) => ids.has(agreement.debtorId));
+    const managerCollected = store.files
+      .filter((file) => ids.has(file.debtorId) && file.category === "comprobante" && file.status === "validado")
+      .reduce((sum, file) => sum + Number(file.amount || 0), 0);
+    const contactRate = row.count ? Math.round((row.withContact / row.count) * 100) : 0;
+    return `
+      <tr>
+        <td><strong>${escapeHtml(name)}</strong></td>
+        <td>${fmtNum.format(row.count)}</td>
+        <td>${fmtMoney.format(row.deudaTotal)}</td>
+        <td>${fmtNum.format(managerEntries.length)}</td>
+        <td>${fmtNum.format(managerAgreements.length)}</td>
+        <td>${fmtMoney.format(managerCollected)}</td>
+        <td>${contactRate}%</td>
+      </tr>
+    `;
+  }).join("") || `<tr><td colspan="7">Sin gestores detectados.</td></tr>`;
 }
 
 function filteredReportEntries() {
@@ -3533,6 +3688,16 @@ function bindEvents() {
   });
   $("itImportForm")?.addEventListener("submit", previewInformaticoImport);
   $("itAssignmentForm")?.addEventListener("submit", saveInformaticoAssignment);
+  $("itAssignmentPreview")?.addEventListener("click", renderInformaticoAssignmentPreview);
+  $("itAssignmentKeys")?.addEventListener("input", renderInformaticoAssignmentPreview);
+  $("itAssignmentTarget")?.addEventListener("change", renderInformaticoAssignmentPreview);
+  ["itManagerFilter", "itManagerFrom", "itManagerTo"].forEach((id) => $(id)?.addEventListener("input", renderInformaticoReports));
+  $("itClearManagerFilters")?.addEventListener("click", () => {
+    $("itManagerFilter").value = "";
+    $("itManagerFrom").value = "";
+    $("itManagerTo").value = "";
+    renderInformaticoReports();
+  });
   $("itUserForm")?.addEventListener("submit", saveInternalUserProfile);
   $("itCreateMissingExecutives")?.addEventListener("click", createMissingExecutiveProfiles);
   $("itSyncUsers")?.addEventListener("click", () => syncInternalUsersFromApi(true));

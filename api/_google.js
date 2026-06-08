@@ -93,6 +93,21 @@ async function updateValues(spreadsheetId, range, values) {
   });
 }
 
+async function batchUpdateValues(spreadsheetId, data) {
+  if (!Array.isArray(data) || !data.length) return { totalUpdatedCells: 0 };
+  return sheetsRequest(`${spreadsheetId}/values:batchUpdate`, {
+    method: "POST",
+    body: JSON.stringify({
+      valueInputOption: "USER_ENTERED",
+      data: data.map((item) => ({
+        range: item.range,
+        majorDimension: "ROWS",
+        values: item.values,
+      })),
+    }),
+  });
+}
+
 function columnLetter(index) {
   let value = index + 1;
   let output = "";
@@ -105,6 +120,7 @@ function columnLetter(index) {
 }
 
 module.exports = {
+  batchUpdateValues,
   batchGetValues,
   DRIVE_SCOPE,
   SHEETS_SCOPE,
