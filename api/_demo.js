@@ -57,7 +57,10 @@ function demoUser(username, password) {
 
 function demoRut(prefix, index) {
   const number = `${prefix}${String(index).padStart(4, "0")}`;
-  return `${number.slice(0, 2)}.${number.slice(2, 5)}.${number.slice(5)}-${rutDv(number)}`;
+  const head = number.slice(0, -6);
+  const middle = number.slice(-6, -3);
+  const tail = number.slice(-3);
+  return `${head}.${middle}.${tail}-${rutDv(number)}`;
 }
 
 function demoMoney(index) {
