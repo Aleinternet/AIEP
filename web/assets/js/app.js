@@ -44,6 +44,7 @@ const store = {
   internalUsers: [],
   health: null,
   healthLoading: false,
+  remoteWarnings: {},
 };
 
 let session = null;
@@ -61,6 +62,8 @@ let lastExcludeIndex = null;
 let whatsappWindow = null;
 let visibleUserPasswords = new Set();
 let editingInternalUsers = new Set();
+const remoteLoadedDebtors = new Set();
+const remoteLoadingDebtors = new Set();
 
 function applyRemoteData(remote) {
   if (!remote) return;
@@ -305,6 +308,222 @@ async function sheetsUsersApi(action, payload = {}) {
       adminPass: session.authPassword,
       ...payload,
     }),
+  });
+}
+
+function operationalApiHeaders() {
+  if (!session?.username || !session?.authPassword) throw new Error("Sesion administrativa no disponible.");
+  return {
+    "x-abg-user": session.username,
+    "x-abg-pass": session.authPassword,
+  };
+}
+
+function debtorQuery(debtor) {
+  return `debtor_id=${encodeURIComponent(debtor.id)}`;
+}
+
+function setRemoteWarning(debtor, message) {
+  if (!debtor) return;
+  if (message) store.remoteWarnings[debtor.id] = `Modo degradado / datos no oficiales: ${message}`;
+  else delete store.remoteWarnings[debtor.id];
+}
+
+function remoteWarningBanner(debtor) {
+  const message = store.remoteWarnings[debtor?.id];
+  return message ? `<div class="detail-empty">${escapeHtml(message)}</div>` : "";
+}
+
+function apiEntryToLocal(entry, debtor = selectedDebtor) {
+  return {
+    id: entry.id,
+    debtorId: entry.debtorId || entry.debtor_id,
+    debtorName: debtor?.nombreTitular || "",
+    date: entry.date || entry.management_date,
+    channel: entry.channel || "",
+    result: entry.result || "",
+    comment: entry.comment || "",
+    user: entry.user || entry.created_by || "",
+    createdAt: entry.createdAt || entry.created_at || new Date().toISOString(),
+    remote: true,
+  };
+}
+
+function replaceEntriesForDebtor(debtor, entries) {
+  const official = entries.map((entry) => apiEntryToLocal(entry, debtor));
+  store.entries = [
+    ...official,
+    ...store.entries.filter((entry) => entry.debtorId !== debtor.id || entry.pendingRemote),
+  ];
+}
+
+function apiContactStatusToLocal(status, contact = {}) {
+  if (status === "valido") return "ok";
+  if (status === "no_considerar") return "ignore";
+  if (contact.category || contact.note) return "manual";
+  return "";
+}
+
+function localContactStatusToApi(status) {
+  if (status === "ok") return "valido";
+  if (status === "ignore") return "no_considerar";
+  return "sin_validar";
+}
+
+function apiContactToLocal(contact) {
+  const status = apiContactStatusToLocal(contact.status, contact);
+  return {
+    id: contact.id,
+    status,
+    category: contact.category || "",
+    comment: contact.note || "",
+    date: status ? (contact.updatedAt || contact.updated_at || contact.createdAt || contact.created_at || new Date().toISOString()) : "",
+    remote: true,
+  };
+}
+
+function ensureDebtorHasContactValue(debtor, contact) {
+  const key = contact.type === "correo" ? "correos" : "telefonos";
+  debtor[key] = debtor[key] || [];
+  const normalized = normalizedContactValue(contact.type, contact.value);
+  if (!debtor[key].some((value) => normalizedContactValue(contact.type, value) === normalized)) {
+    debtor[key].push(contact.value);
+  }
+}
+
+function applyRemoteContacts(debtor, contacts) {
+  Object.keys(store.contacts)
+    .filter((key) => key.startsWith(`${debtor.id}|`))
+    .forEach((key) => delete store.contacts[key]);
+  contacts.forEach((contact) => {
+    ensureDebtorHasContactValue(debtor, contact);
+    store.contacts[contactKey(debtor, contact.type, contact.value)] = apiContactToLocal(contact);
+  });
+}
+
+function apiCommentToLocal(comment) {
+  return {
+    id: comment.id,
+    text: comment.body || comment.text || "",
+    user: comment.user || "",
+    createdAt: comment.createdAt || comment.created_at || new Date().toISOString(),
+    parentId: comment.parentId || comment.parent_id || null,
+    replies: [],
+    remote: true,
+  };
+}
+
+function applyRemoteComments(debtor, comments) {
+  const byId = new Map();
+  comments.forEach((comment) => byId.set(comment.id, apiCommentToLocal(comment)));
+  const roots = [];
+  for (const item of byId.values()) {
+    if (item.parentId && byId.has(item.parentId)) {
+      const reply = { id: item.id, text: item.text, user: item.user, createdAt: item.createdAt, remote: true };
+      byId.get(item.parentId).replies.push(reply);
+    } else {
+      roots.push(item);
+    }
+  }
+  store.comments[debtor.id] = roots;
+}
+
+async function loadOperationalForDebtor(debtor, { force = false } = {}) {
+  if (!debtor || session?.role === "deudor" || !session?.authPassword) return false;
+  if (!force && remoteLoadedDebtors.has(debtor.id)) return true;
+  if (remoteLoadingDebtors.has(debtor.id)) return false;
+  remoteLoadingDebtors.add(debtor.id);
+  try {
+    const headers = operationalApiHeaders();
+    const [entriesJson, contactsJson, commentsJson] = await Promise.all([
+      requestJson(`/api/management-entries?${debtorQuery(debtor)}`, { headers }),
+      requestJson(`/api/contacts?${debtorQuery(debtor)}`, { headers }),
+      requestJson(`/api/internal-comments?${debtorQuery(debtor)}`, { headers }),
+    ]);
+    replaceEntriesForDebtor(debtor, entriesJson.entries || []);
+    applyRemoteContacts(debtor, contactsJson.contacts || []);
+    applyRemoteComments(debtor, commentsJson.comments || []);
+    remoteLoadedDebtors.add(debtor.id);
+    setRemoteWarning(debtor, "");
+    if (selectedDebtor?.id === debtor.id) {
+      renderExecutiveRows();
+      renderExecutiveDetail();
+    }
+    return true;
+  } catch (error) {
+    setRemoteWarning(debtor, error.message || "No se pudo cargar la informacion oficial.");
+    if (selectedDebtor?.id === debtor.id) renderExecutiveDetail();
+    return false;
+  } finally {
+    remoteLoadingDebtors.delete(debtor.id);
+  }
+}
+
+function snapshotOperationalDebtor(debtor) {
+  return {
+    entries: store.entries.slice(),
+    contacts: { ...store.contacts },
+    comments: JSON.parse(JSON.stringify(store.comments[debtor.id] || [])),
+  };
+}
+
+function restoreOperationalDebtor(debtor, snapshot) {
+  store.entries = snapshot.entries;
+  store.contacts = snapshot.contacts;
+  store.comments[debtor.id] = snapshot.comments;
+}
+
+async function createRemoteManagementEntry(debtor, entry) {
+  const json = await requestJson("/api/management-entries", {
+    method: "POST",
+    headers: operationalApiHeaders(),
+    body: JSON.stringify({
+      debtor_id: debtor.id,
+      date: entry.date,
+      channel: entry.channel,
+      result: entry.result,
+      comment: entry.comment,
+    }),
+  });
+  return apiEntryToLocal(json.entry, debtor);
+}
+
+async function saveRemoteContact(debtor, type, value, record) {
+  const body = {
+    debtor_id: debtor.id,
+    type,
+    value,
+    status: localContactStatusToApi(record.status),
+    category: record.category || "",
+    note: record.comment || "",
+  };
+  const existingId = record.id;
+  const json = await requestJson("/api/contacts", {
+    method: existingId ? "PATCH" : "POST",
+    headers: operationalApiHeaders(),
+    body: JSON.stringify(existingId ? { id: existingId, ...body } : body),
+  });
+  return apiContactToLocal(json.contact);
+}
+
+async function createRemoteComment(debtor, text, parentId = null) {
+  const json = await requestJson("/api/internal-comments", {
+    method: "POST",
+    headers: operationalApiHeaders(),
+    body: JSON.stringify({
+      debtor_id: debtor.id,
+      body: text,
+      parent_id: parentId,
+    }),
+  });
+  return apiCommentToLocal(json.comment);
+}
+
+async function patchRemoteComment(id, payload) {
+  return requestJson("/api/internal-comments", {
+    method: "PATCH",
+    headers: operationalApiHeaders(),
+    body: JSON.stringify({ id, ...payload }),
   });
 }
 
@@ -903,6 +1122,7 @@ function renderExecutiveRows() {
       selectedDebtor = executiveRows[Number(row.dataset.index)];
       renderExecutiveRows();
       renderExecutiveDetail();
+      loadOperationalForDebtor(selectedDebtor);
     });
   });
   document.querySelectorAll("[data-debtor-id].exclude-toggle").forEach((btn) => btn.addEventListener("click", toggleCampaignExcluded));
@@ -999,6 +1219,7 @@ function renderExecutiveDetail() {
   $("selectedCommentIcon").title = `${commentCount(d)} comentario(s) interno(s)`;
   $("executiveDetail").className = "";
   $("executiveDetail").innerHTML = `
+    ${remoteWarningBanner(d)}
     <section class="comment-thread">
       <button type="button" id="toggleComments" class="comment-toggle"><span class="comment-arrow">▶</span> Comentarios internos (${commentCount(d)})</button>
       <div id="commentPanel" class="comment-panel" hidden>
@@ -1069,7 +1290,7 @@ function renderExecutiveDetail() {
     $("toggleComments").classList.toggle("open", !panel.hidden);
   });
   $("commentForm").addEventListener("submit", saveComment);
-  document.querySelectorAll("[data-reply-comment]").forEach((btn) => btn.addEventListener("click", saveReply));
+  document.querySelectorAll("[data-reply-comment]").forEach((form) => form.addEventListener("submit", saveReply));
   document.querySelectorAll("[data-delete-comment]").forEach((btn) => btn.addEventListener("click", deleteComment));
   document.querySelectorAll("[data-delete-reply]").forEach((btn) => btn.addEventListener("click", deleteReply));
   $("openAgreementModal").addEventListener("click", openAgreementModal);
@@ -1141,13 +1362,13 @@ function renderComments(debtor) {
     <article class="comment-item">
       <div class="comment-head">
         <strong>${comment.user} · ${new Date(comment.createdAt).toLocaleString("es-CL")}</strong>
-        <button type="button" class="comment-delete" data-delete-comment="${comment.id}" title="Eliminar comentario">✕</button>
+        <button type="button" class="comment-delete" data-delete-comment="${escapeAttr(comment.id)}" title="Eliminar comentario">x</button>
       </div>
-      <p>${comment.text}</p>
+      <p>${escapeHtml(comment.text)}</p>
       <div class="reply-list">
-        ${(comment.replies || []).map((reply, index) => `<div class="reply-item"><strong>${reply.user}</strong><span>${reply.text}</span><button type="button" class="comment-delete" data-delete-comment="${comment.id}" data-delete-reply="${index}" title="Eliminar respuesta">✕</button></div>`).join("")}
+        ${(comment.replies || []).map((reply, index) => `<div class="reply-item"><strong>${escapeHtml(reply.user)}</strong><span>${escapeHtml(reply.text)}</span><button type="button" class="comment-delete" data-delete-comment="${escapeAttr(comment.id)}" data-delete-reply="${escapeAttr(reply.id || index)}" title="Eliminar respuesta">x</button></div>`).join("")}
       </div>
-      <form class="reply-form" data-reply-comment="${comment.id}">
+      <form class="reply-form" data-reply-comment="${escapeAttr(comment.id)}">
         <input placeholder="Responder comentario">
         <button type="submit">Responder</button>
       </form>
@@ -1155,58 +1376,123 @@ function renderComments(debtor) {
   `).join("");
 }
 
-function deleteComment(event) {
+async function deleteComment(event) {
+  if (event.currentTarget.dataset.deleteReply !== undefined) return;
   const id = event.currentTarget.dataset.deleteComment;
+  const snapshot = snapshotOperationalDebtor(selectedDebtor);
   store.comments[selectedDebtor.id] = (store.comments[selectedDebtor.id] || []).filter((comment) => comment.id !== id);
-  writeJson("abg_comments", store.comments);
   renderExecutiveRows();
   renderExecutiveDetail();
   $("commentPanel").hidden = false;
   $("toggleComments").classList.add("open");
+  try {
+    if (/^[0-9a-f-]{36}$/i.test(id)) await patchRemoteComment(id, { action: "delete" });
+    setRemoteWarning(selectedDebtor, "");
+  } catch (error) {
+    restoreOperationalDebtor(selectedDebtor, snapshot);
+    setRemoteWarning(selectedDebtor, error.message || "No se pudo eliminar el comentario oficial.");
+    renderExecutiveRows();
+    renderExecutiveDetail();
+    $("commentPanel").hidden = false;
+    $("toggleComments").classList.add("open");
+  }
 }
 
-function deleteReply(event) {
+async function deleteReply(event) {
+  event.stopPropagation();
   const id = event.currentTarget.dataset.deleteComment;
-  const index = Number(event.currentTarget.dataset.deleteReply);
+  const replyIdOrIndex = event.currentTarget.dataset.deleteReply;
+  const snapshot = snapshotOperationalDebtor(selectedDebtor);
   const list = store.comments[selectedDebtor.id] || [];
   const comment = list.find((item) => item.id === id);
   if (!comment) return;
-  comment.replies = (comment.replies || []).filter((_, i) => i !== index);
-  writeJson("abg_comments", store.comments);
+  comment.replies = (comment.replies || []).filter((reply, i) => String(reply.id || i) !== String(replyIdOrIndex));
   renderExecutiveRows();
   renderExecutiveDetail();
   $("commentPanel").hidden = false;
   $("toggleComments").classList.add("open");
+  try {
+    if (/^[0-9a-f-]{36}$/i.test(replyIdOrIndex)) await patchRemoteComment(replyIdOrIndex, { action: "delete" });
+    setRemoteWarning(selectedDebtor, "");
+  } catch (error) {
+    restoreOperationalDebtor(selectedDebtor, snapshot);
+    setRemoteWarning(selectedDebtor, error.message || "No se pudo eliminar la respuesta oficial.");
+    renderExecutiveRows();
+    renderExecutiveDetail();
+    $("commentPanel").hidden = false;
+    $("toggleComments").classList.add("open");
+  }
 }
 
-function saveComment(event) {
+async function saveComment(event) {
   event.preventDefault();
   const text = $("commentText").value.trim();
   if (!text) return;
+  const snapshot = snapshotOperationalDebtor(selectedDebtor);
+  const tempId = `tmp-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const list = store.comments[selectedDebtor.id] || [];
-  list.unshift({ id: `${Date.now()}-${Math.random().toString(16).slice(2)}`, text, user: session.username, createdAt: new Date().toISOString(), replies: [] });
+  list.unshift({ id: tempId, text, user: session.username, createdAt: new Date().toISOString(), replies: [], pendingRemote: true });
   store.comments[selectedDebtor.id] = list;
-  writeJson("abg_comments", store.comments);
   renderExecutiveRows();
   renderExecutiveDetail();
   $("commentPanel").hidden = false;
+  try {
+    const created = await createRemoteComment(selectedDebtor, text);
+    const current = store.comments[selectedDebtor.id] || [];
+    const index = current.findIndex((comment) => comment.id === tempId);
+    if (index >= 0) current[index] = { ...created, replies: [] };
+    setRemoteWarning(selectedDebtor, "");
+    remoteLoadedDebtors.add(selectedDebtor.id);
+    renderExecutiveRows();
+    renderExecutiveDetail();
+    $("commentPanel").hidden = false;
+  } catch (error) {
+    restoreOperationalDebtor(selectedDebtor, snapshot);
+    setRemoteWarning(selectedDebtor, error.message || "No se pudo guardar el comentario oficial.");
+    renderExecutiveRows();
+    renderExecutiveDetail();
+    $("commentPanel").hidden = false;
+  }
 }
 
-function saveReply(event) {
+async function saveReply(event) {
   event.preventDefault();
   const input = event.currentTarget.querySelector("input");
   const text = input.value.trim();
   if (!text) return;
   const id = event.currentTarget.dataset.replyComment;
+  const snapshot = snapshotOperationalDebtor(selectedDebtor);
   const list = store.comments[selectedDebtor.id] || [];
   const comment = list.find((item) => item.id === id);
   if (!comment) return;
   comment.replies = comment.replies || [];
-  comment.replies.push({ text, user: session.username, createdAt: new Date().toISOString() });
-  writeJson("abg_comments", store.comments);
+  const tempId = `tmp-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  comment.replies.push({ id: tempId, text, user: session.username, createdAt: new Date().toISOString(), pendingRemote: true });
   renderExecutiveRows();
   renderExecutiveDetail();
   $("commentPanel").hidden = false;
+  $("toggleComments").classList.add("open");
+  try {
+    if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error("El comentario padre aun no existe en la nube.");
+    const created = await createRemoteComment(selectedDebtor, text, id);
+    const currentComment = (store.comments[selectedDebtor.id] || []).find((item) => item.id === id);
+    if (currentComment) {
+      const index = currentComment.replies.findIndex((reply) => reply.id === tempId);
+      if (index >= 0) currentComment.replies[index] = { id: created.id, text: created.text, user: created.user, createdAt: created.createdAt, remote: true };
+    }
+    setRemoteWarning(selectedDebtor, "");
+    renderExecutiveRows();
+    renderExecutiveDetail();
+    $("commentPanel").hidden = false;
+    $("toggleComments").classList.add("open");
+  } catch (error) {
+    restoreOperationalDebtor(selectedDebtor, snapshot);
+    setRemoteWarning(selectedDebtor, error.message || "No se pudo guardar la respuesta oficial.");
+    renderExecutiveRows();
+    renderExecutiveDetail();
+    $("commentPanel").hidden = false;
+    $("toggleComments").classList.add("open");
+  }
 }
 
 function renderHistoryCards(debtor) {
@@ -1500,46 +1786,87 @@ function openWhatsAppWeb(phone, message) {
   return Boolean(whatsappWindow);
 }
 
-function updateContactStatus(event) {
-  const btn = event.currentTarget;
-  const wrapper = btn.closest(".contact-item");
-  const comment = wrapper.querySelector("[data-contact-comment]")?.value.trim() || "";
-  const category = wrapper.querySelector("[data-contact-category]")?.value || "";
-  const key = contactKey(selectedDebtor, btn.dataset.type, btn.dataset.value);
-  store.contacts[key] = {
-    status: btn.dataset.contactAction,
-    category,
-    comment,
-    date: new Date().toISOString(),
-  };
-  writeJson("abg_contacts", store.contacts);
-  renderExecutiveDetail();
-}
-
-function saveContactMeta(event) {
+async function updateContactStatus(event) {
   const btn = event.currentTarget;
   const wrapper = btn.closest(".contact-item");
   const comment = wrapper.querySelector("[data-contact-comment]")?.value.trim() || "";
   const category = wrapper.querySelector("[data-contact-category]")?.value || "";
   const key = contactKey(selectedDebtor, btn.dataset.type, btn.dataset.value);
   const current = contactRecord(selectedDebtor, btn.dataset.type, btn.dataset.value);
-  store.contacts[key] = {
+  const snapshot = snapshotOperationalDebtor(selectedDebtor);
+  const nextRecord = {
+    ...current,
+    status: btn.dataset.contactAction,
+    category,
+    comment,
+    date: new Date().toISOString(),
+  };
+  store.contacts[key] = nextRecord;
+  renderExecutiveDetail();
+  try {
+    store.contacts[key] = await saveRemoteContact(selectedDebtor, btn.dataset.type, btn.dataset.value, nextRecord);
+    setRemoteWarning(selectedDebtor, "");
+    remoteLoadedDebtors.add(selectedDebtor.id);
+    renderExecutiveDetail();
+  } catch (error) {
+    restoreOperationalDebtor(selectedDebtor, snapshot);
+    setRemoteWarning(selectedDebtor, error.message || "No se pudo guardar el contacto oficial.");
+    renderExecutiveDetail();
+  }
+}
+
+async function saveContactMeta(event) {
+  const btn = event.currentTarget;
+  const wrapper = btn.closest(".contact-item");
+  const comment = wrapper.querySelector("[data-contact-comment]")?.value.trim() || "";
+  const category = wrapper.querySelector("[data-contact-category]")?.value || "";
+  const key = contactKey(selectedDebtor, btn.dataset.type, btn.dataset.value);
+  const current = contactRecord(selectedDebtor, btn.dataset.type, btn.dataset.value);
+  const snapshot = snapshotOperationalDebtor(selectedDebtor);
+  const nextRecord = {
     ...current,
     status: current.status || "manual",
     category,
     comment,
     date: new Date().toISOString(),
   };
-  writeJson("abg_contacts", store.contacts);
+  store.contacts[key] = nextRecord;
   renderExecutiveDetail();
+  try {
+    store.contacts[key] = await saveRemoteContact(selectedDebtor, btn.dataset.type, btn.dataset.value, nextRecord);
+    setRemoteWarning(selectedDebtor, "");
+    remoteLoadedDebtors.add(selectedDebtor.id);
+    renderExecutiveDetail();
+  } catch (error) {
+    restoreOperationalDebtor(selectedDebtor, snapshot);
+    setRemoteWarning(selectedDebtor, error.message || "No se pudo guardar la metadata oficial del contacto.");
+    renderExecutiveDetail();
+  }
 }
 
-function deleteContactMeta(event) {
+async function deleteContactMeta(event) {
   const btn = event.currentTarget;
-  delete store.contacts[contactKey(selectedDebtor, btn.dataset.type, btn.dataset.value)];
-  delete store.contacts[legacyContactKey(selectedDebtor, btn.dataset.type, btn.dataset.value)];
-  writeJson("abg_contacts", store.contacts);
+  const type = btn.dataset.type;
+  const value = btn.dataset.value;
+  const key = contactKey(selectedDebtor, type, value);
+  const legacyKey = legacyContactKey(selectedDebtor, type, value);
+  const current = contactRecord(selectedDebtor, type, value);
+  const snapshot = snapshotOperationalDebtor(selectedDebtor);
+  delete store.contacts[key];
+  delete store.contacts[legacyKey];
   renderExecutiveDetail();
+  try {
+    if (current.id) {
+      const cleanRecord = { ...current, status: "", category: "", comment: "" };
+      store.contacts[key] = await saveRemoteContact(selectedDebtor, type, value, cleanRecord);
+    }
+    setRemoteWarning(selectedDebtor, "");
+    renderExecutiveDetail();
+  } catch (error) {
+    restoreOperationalDebtor(selectedDebtor, snapshot);
+    setRemoteWarning(selectedDebtor, error.message || "No se pudo borrar la marca oficial del contacto.");
+    renderExecutiveDetail();
+  }
 }
 
 function usableContacts(debtor, type) {
@@ -1682,11 +2009,11 @@ function deliverCampaignItem() {
   if (campaignQueue.length) campaignTimer = window.setTimeout(deliverCampaignItem, intervalMs);
 }
 
-function recordCampaignManagement(debtor, type, value) {
+async function recordCampaignManagement(debtor, type, value) {
   const channel = type === "correo" ? "Correo" : "WhatsApp";
   const target = type === "correo" ? `correo ${value}` : `telefono ${value}`;
-  store.entries.unshift({
-    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  const entry = {
+    id: `tmp-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     debtorId: debtor.id,
     debtorName: debtor.nombreTitular,
     date: today(),
@@ -1695,9 +2022,23 @@ function recordCampaignManagement(debtor, type, value) {
     comment: `Envio automatico masivo por ${channel} al ${target}.`,
     user: session?.username || "callcenter",
     createdAt: new Date().toISOString(),
-  });
-  writeJson("abg_entries", store.entries);
+    pendingRemote: true,
+  };
+  store.entries.unshift(entry);
   renderExecutiveRows();
+  try {
+    const saved = await createRemoteManagementEntry(debtor, entry);
+    const index = store.entries.findIndex((item) => item.id === entry.id);
+    if (index >= 0) store.entries[index] = saved;
+    setRemoteWarning(debtor, "");
+    remoteLoadedDebtors.add(debtor.id);
+    renderExecutiveRows();
+  } catch (error) {
+    store.entries = store.entries.filter((item) => item.id !== entry.id);
+    setRemoteWarning(debtor, error.message || "No se pudo registrar la gestion automatica oficial.");
+    if (selectedDebtor?.id === debtor.id) renderExecutiveDetail();
+    renderExecutiveRows();
+  }
 }
 
 function stopCampaign(updateStatus = true) {
@@ -1830,26 +2171,43 @@ async function saveManagementEntry(event) {
   event.preventDefault();
   const form = event.currentTarget;
   const fd = new FormData(form);
+  const snapshot = snapshotOperationalDebtor(selectedDebtor);
   const entry = {
-    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    id: `tmp-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     debtorId: selectedDebtor.id,
     debtorName: selectedDebtor.nombreTitular,
     date: fd.get("date"),
     channel: fd.get("channel"),
     result: fd.get("result"),
     comment: fd.get("comment") || "Sin comentario",
-    user: "callcenter",
+    user: session.username,
     createdAt: new Date().toISOString(),
+    pendingRemote: true,
   };
   store.entries.unshift(entry);
-  writeJson("abg_entries", store.entries);
-
-  const file = fd.get("receipt");
-  if (file && file.size) {
-    await saveFileRecord(file, { debtorId: selectedDebtor.id, debtorName: selectedDebtor.nombreTitular, source: "ejecutivo", category: "comprobante", entryId: entry.id });
-  }
   renderExecutiveRows();
   renderExecutiveDetail();
+
+  try {
+    const saved = await createRemoteManagementEntry(selectedDebtor, entry);
+    const index = store.entries.findIndex((item) => item.id === entry.id);
+    if (index >= 0) store.entries[index] = saved;
+    setRemoteWarning(selectedDebtor, "");
+    remoteLoadedDebtors.add(selectedDebtor.id);
+
+    const file = fd.get("receipt");
+    if (file && file.size) {
+      await saveFileRecord(file, { debtorId: selectedDebtor.id, debtorName: selectedDebtor.nombreTitular, source: "ejecutivo", category: "comprobante", entryId: saved.id });
+    }
+    form.reset();
+    renderExecutiveRows();
+    renderExecutiveDetail();
+  } catch (error) {
+    restoreOperationalDebtor(selectedDebtor, snapshot);
+    setRemoteWarning(selectedDebtor, error.message || "No se pudo guardar la gestion oficial.");
+    renderExecutiveRows();
+    renderExecutiveDetail();
+  }
 }
 
 function renderHistory(debtor) {
