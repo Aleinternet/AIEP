@@ -246,18 +246,23 @@ function appendPortfolioFilters(params, context = {}, filters = {}) {
       .replace(/[^a-zA-Z0-9.\-\s]/g, " ")
       .trim();
     const safe = text.replace(/\*/g, " ");
-    const filtersOr = [
-      rut ? `rut_deudor_normalizado.ilike.*${rut}*` : "",
-      rut ? `rut_titular_normalizado.ilike.*${rut}*` : "",
-      rut ? `rut_alumno_normalizado.ilike.*${rut}*` : "",
-      `id.ilike.*${safe}*`,
-      `nombre_titular.ilike.*${safe}*`,
-      `nombre_alumno.ilike.*${safe}*`,
-      `comuna.ilike.*${safe}*`,
-      `rol.ilike.*${safe}*`,
-      `tribunal.ilike.*${safe}*`,
-      `asignacion.ilike.*${safe}*`,
-    ].filter(Boolean);
+    const looksLikeRut = rut.length >= 7 && /^[0-9K]+$/.test(rut);
+    const filtersOr = looksLikeRut
+      ? [
+        `rut_deudor_normalizado.eq.${rut}`,
+        `rut_titular_normalizado.eq.${rut}`,
+        `rut_alumno_normalizado.eq.${rut}`,
+        `id.ilike.*${rut}*`,
+      ]
+      : [
+        `id.ilike.*${safe}*`,
+        `nombre_titular.ilike.*${safe}*`,
+        `nombre_alumno.ilike.*${safe}*`,
+        `comuna.ilike.*${safe}*`,
+        `rol.ilike.*${safe}*`,
+        `tribunal.ilike.*${safe}*`,
+        `asignacion.ilike.*${safe}*`,
+      ];
     params.set("or", `(${filtersOr.join(",")})`);
   }
 }
@@ -272,7 +277,11 @@ async function loadPortfolioPage(context = {}, filters = {}) {
     offset: String(offset),
   });
   appendPortfolioFilters(params, context, filters);
-  const { rows: debtRows, count } = await supabaseFetchWithCount(`debtors?${params.toString()}`);
+  const pagePath = `debtors?${params.toString()}`;
+  const counted = filters.count === true
+    ? await supabaseFetchWithCount(pagePath)
+    : { rows: await supabaseFetch(pagePath), count: null };
+  const { rows: debtRows, count } = counted;
   const contactsByDebtor = await contactsForDebtorRows(debtRows);
   const debtors = debtRows.map((row) => mapDebtor(row, contactsByDebtor.get(row.id) || []));
   const summary = buildSummary(debtors);
