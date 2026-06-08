@@ -67,6 +67,7 @@ let informaticoSearchCache = new Map();
 let informaticoSortedDebtors = null;
 let informaticoPortfolioRequestId = 0;
 let informaticoPortfolioLoading = false;
+let internalUsersLoading = false;
 const remoteLoadedDebtors = new Set();
 const remoteLoadingDebtors = new Set();
 
@@ -295,16 +296,25 @@ async function internalUsersApi(action, payload = {}) {
 }
 
 async function syncInternalUsersFromApi(showStatus = true) {
+  if (internalUsersLoading) return false;
+  internalUsersLoading = true;
   try {
     const json = await sheetsUsersApi("sync");
     store.internalUsers = json.users || [];
     if (showStatus) $("itUserStatus").innerHTML = `<div class="history-item"><strong>Usuarios sincronizados desde Google Sheets</strong><br>${fmtNum.format(json.users?.length || 0)} asignados recibidos desde AIEP_BASE_TOTAL.</div>`;
-    if (document.querySelector(".view.active")?.id === "informaticoUsers") renderInformaticoUsers();
+    const activeView = document.querySelector(".view.active")?.id;
+    if (activeView === "informaticoUsers") renderInformaticoUsers();
+    if (activeView === "informaticoHome") renderInformaticoHome();
+    if (activeView === "informaticoAssignments") renderInformaticoAssignments();
+    if (activeView === "informaticoReports") renderInformaticoReports();
     return true;
   } catch (error) {
     store.internalUsers = [];
     if (showStatus) $("itUserStatus").innerHTML = `<div class="detail-empty">No se pudo sincronizar con Google Sheets/Supabase: ${escapeHtml(error.message)}</div>`;
     return false;
+  } finally {
+    internalUsersLoading = false;
+    updateAssignmentButtons();
   }
 }
 
@@ -2509,7 +2519,44 @@ function assignmentGroups(debtors = data.debtors) {
   }, {})).sort((a, b) => b[1].deudaTotal - a[1].deudaTotal);
 }
 
+function sheetAssignmentUsers() {
+  return store.internalUsers
+    .filter((user) => (user.role === "callcenter" || user.role === "ejecutivo") && user.active !== false)
+    .filter((user) => user.assignmentName || user.displayName)
+    .sort((a, b) => String(a.assignmentName || a.displayName).localeCompare(String(b.assignmentName || b.displayName), "es", { numeric: true }));
+}
+
+function assignmentSummaryGroups() {
+  const users = sheetAssignmentUsers();
+  if (users.length) {
+    return users.map((user) => {
+      const name = user.assignmentName || user.displayName || user.username || "Sin asignacion";
+      return [name, {
+        count: Number(user.cases || 0),
+        saldoCapital: Number(user.capitalTotal || 0),
+        deudaTotal: Number(user.debtTotal || user.deudaTotal || 0),
+        withContact: 0,
+        source: "sheets",
+      }];
+    }).sort((a, b) => b[1].count - a[1].count || String(a[0]).localeCompare(String(b[0]), "es", { numeric: true }));
+  }
+  return assignmentGroups();
+}
+
 function assignmentRemesaMatrix(debtors = data.debtors) {
+  const users = sheetAssignmentUsers();
+  if (users.length) {
+    const remesas = [...new Set(users.flatMap((user) => Object.keys(user.remesas || {})))]
+      .sort((a, b) => String(a).localeCompare(String(b), "es", { numeric: true }));
+    return {
+      remesas,
+      rows: users.map((user) => {
+        const remesasMap = user.remesas || {};
+        const total = Number(user.cases || Object.values(remesasMap).reduce((sum, value) => sum + Number(value || 0), 0));
+        return [user.assignmentName || user.displayName || user.username || "Sin asignacion", { total, remesas: remesasMap }];
+      }).sort((a, b) => b[1].total - a[1].total || String(a[0]).localeCompare(String(b[0]), "es", { numeric: true })),
+    };
+  }
   const remesas = [...new Set(debtors.map((debtor) => debtor.cartera).filter(Boolean))]
     .sort((a, b) => String(a).localeCompare(String(b), "es", { numeric: true }));
   const rows = new Map();
@@ -2574,19 +2621,21 @@ function renderHealthChecklist() {
 function renderInformaticoHome() {
   const totalDebt = data.debtors.reduce((sum, debtor) => sum + Number(debtor.deudaTotal || 0), 0);
   const noContact = data.debtors.filter((debtor) => !(debtor.telefonos || []).length && !(debtor.correos || []).length).length;
-  const groups = assignmentGroups();
-  setText("itKpiTotal", fmtNum.format(data.debtors.length));
-  setText("itKpiDebt", fmtMoney.format(totalDebt));
+  const groups = assignmentSummaryGroups();
+  const officialTotalCount = groups.reduce((sum, [, row]) => sum + Number(row.count || 0), 0) || data.debtors.length;
+  const officialTotalDebt = groups.reduce((sum, [, row]) => sum + Number(row.deudaTotal || 0), 0) || totalDebt;
+  setText("itKpiTotal", fmtNum.format(officialTotalCount));
+  setText("itKpiDebt", fmtMoney.format(officialTotalDebt));
   setText("itKpiExecutives", fmtNum.format(groups.length));
   setText("itKpiNoContact", fmtNum.format(noContact));
   renderBars("itOperationalBars", [
-    ["Total cartera", data.debtors.length],
+    ["Total cartera", officialTotalCount],
     ["Con telefono", data.debtors.filter((d) => d.telefonos.length).length],
     ["Con correo", data.debtors.filter((d) => d.correos.length).length],
     ["Sin contacto", noContact],
     ["Con convenio local", Object.keys(store.agreements).length],
   ]);
-  renderBars("itAssignmentBars", groups.slice(0, 12).map(([name, row]) => [name, row.count]));
+  renderBars("itAssignmentBars", groups.map(([name, row]) => [name, row.count]));
   renderInformaticoAssignmentMatrix();
   renderHealthChecklist();
   if (!store.health && !store.healthLoading) loadHealthFromApi();
@@ -2788,21 +2837,20 @@ function findDebtorByImportKey(key) {
 }
 
 function renderInformaticoAssignments() {
-  const groups = assignmentGroups();
+  if (!store.internalUsers.length && !internalUsersLoading) syncInternalUsersFromApi(false);
+  const groups = assignmentSummaryGroups();
   const target = $("itAssignmentTarget");
   if (target) {
-    const activeUsers = store.internalUsers
-      .filter((user) => (user.role === "callcenter" || user.role === "ejecutivo") && user.active !== false)
-      .sort((a, b) => String(a.assignmentName || a.displayName).localeCompare(String(b.assignmentName || b.displayName), "es"));
+    const activeUsers = sheetAssignmentUsers();
     const fallback = groups.map(([name]) => ({ assignmentName: name, displayName: name }));
     const options = (activeUsers.length ? activeUsers : fallback)
       .map((user) => user.assignmentName || user.displayName)
       .filter(Boolean);
     const current = target.value;
-    target.innerHTML = `<option value="">Seleccione ejecutivo activo</option>${[...new Set(options)].map((name) => `<option value="${escapeAttr(name)}">${escapeHtml(name)}</option>`).join("")}`;
+    target.innerHTML = `<option value="">${internalUsersLoading ? "Cargando ejecutivos..." : "Seleccione ejecutivo activo"}</option>${[...new Set(options)].map((name) => `<option value="${escapeAttr(name)}">${escapeHtml(name)}</option>`).join("")}<option value="__add_executive__">Agregar ejecutivo</option>`;
     target.value = options.includes(current) ? current : "";
   }
-  $("itAssignmentSummary").innerHTML = groups.slice(0, 14).map(([name, row]) => `
+  $("itAssignmentSummary").innerHTML = groups.map(([name, row]) => `
     <div class="bar-row">
       <span>${escapeHtml(name)}</span>
       <div class="bar-track"><div class="bar-fill" style="width:${Math.max(5, row.count / Math.max(groups[0]?.[1].count || 1, 1) * 100)}%"></div></div>
@@ -2810,6 +2858,7 @@ function renderInformaticoAssignments() {
     </div>
   `).join("") || `<div class="detail-empty">Sin asignaciones detectadas.</div>`;
   renderInformaticoAssignmentPreview();
+  updateAssignmentButtons();
 }
 
 function parseAssignmentKeys(text = "") {
@@ -2839,7 +2888,7 @@ function renderInformaticoAssignmentPreview() {
   const target = $("itAssignmentTarget")?.value || "";
   const { keys, rows } = assignmentPreviewRows();
   if (!keys.length) {
-    box.innerHTML = `<div class="detail-empty">Pegue RUTs o id_rem para previsualizar la reasignacion.</div>`;
+    box.innerHTML = `<div class="detail-empty">Pegue RUTs o id_rem para revisar la reasignacion.</div>`;
     return;
   }
   const validRows = rows.filter((row) => row.valid);
@@ -2850,7 +2899,7 @@ function renderInformaticoAssignmentPreview() {
   }, {});
   box.innerHTML = `
     <div class="history-item">
-      <strong>Preview reasignacion</strong><br>
+      <strong>Revision de reasignacion</strong><br>
       Destino: ${escapeHtml(target || "Sin destino seleccionado")}<br>
       Detectados: ${fmtNum.format(validRows.length)} / ${fmtNum.format(keys.length)} · Invalidos/no encontrados: ${fmtNum.format(invalidRows.length)}
     </div>
@@ -2862,6 +2911,58 @@ function renderInformaticoAssignmentPreview() {
     </div>
     ${invalidRows.length ? `<div class="detail-empty">No encontrados: ${escapeHtml(invalidRows.slice(0, 30).map((row) => row.key).join(", "))}${invalidRows.length > 30 ? "..." : ""}</div>` : ""}
   `;
+  updateAssignmentButtons();
+}
+
+function updateAssignmentButtons() {
+  const apply = $("itAssignmentApply");
+  if (!apply) return;
+  const keys = parseAssignmentKeys($("itAssignmentKeys")?.value || "");
+  const target = $("itAssignmentTarget")?.value || "";
+  apply.disabled = !keys.length || !target || target === "__add_executive__" || internalUsersLoading;
+}
+
+async function handleAssignmentTargetChange() {
+  const target = $("itAssignmentTarget");
+  if (!target) return;
+  if (target.value !== "__add_executive__") {
+    renderInformaticoAssignmentPreview();
+    return;
+  }
+  const name = window.prompt("Nombre del nuevo ejecutivo/asignado:");
+  if (!name || !name.trim()) {
+    target.value = "";
+    renderInformaticoAssignmentPreview();
+    return;
+  }
+  const cleanName = name.trim().replace(/\s+/g, " ").toUpperCase();
+  $("itAssignmentStatus").innerHTML = `<div class="history-item"><strong>Creando ejecutivo...</strong><br>${escapeHtml(cleanName)} se guardara en Google Sheets y Supabase con contrasena inicial 123456.</div>`;
+  try {
+    const json = await sheetsUsersApi("save", {
+      user: {
+        username: normalizeUsername(cleanName),
+        password: "123456",
+        role: "callcenter",
+        displayName: cleanName,
+        assignmentName: cleanName,
+        active: true,
+      },
+    });
+    const saved = json.user;
+    const index = store.internalUsers.findIndex((user) => (user.username || user.id) === (saved.username || saved.id)
+      || normalizeText(user.assignmentName || user.displayName) === normalizeText(saved.assignmentName || saved.displayName));
+    if (index >= 0) store.internalUsers[index] = saved;
+    else store.internalUsers.push(saved);
+    $("itAssignmentStatus").innerHTML = `<div class="history-item"><strong>Ejecutivo agregado</strong><br>${escapeHtml(saved.assignmentName || saved.displayName || cleanName)} quedo disponible para reasignaciones.</div>`;
+    renderInformaticoAssignments();
+    $("itAssignmentTarget").value = saved.assignmentName || saved.displayName || cleanName;
+    renderInformaticoAssignmentPreview();
+    renderInformaticoUsers();
+  } catch (error) {
+    $("itAssignmentStatus").innerHTML = `<div class="detail-empty">No se pudo agregar el ejecutivo: ${escapeHtml(error.message)}</div>`;
+    target.value = "";
+    renderInformaticoAssignmentPreview();
+  }
 }
 
 async function saveInformaticoAssignment(event) {
@@ -2873,6 +2974,7 @@ async function saveInformaticoAssignment(event) {
     $("itAssignmentStatus").innerHTML = `<div class="detail-empty">Pegue RUTs/id_rem y seleccione un asignado destino.</div>`;
     return;
   }
+  $("itAssignmentApply").disabled = true;
   $("itAssignmentStatus").innerHTML = `<div class="history-item"><strong>Aplicando reasignacion...</strong><br>Actualizando Google Sheets y Supabase.</div>`;
   try {
     const json = await reassignBulkApi({ keys, targetAssignment: target, reason });
@@ -2892,6 +2994,8 @@ async function saveInformaticoAssignment(event) {
     renderExecutiveRows();
   } catch (error) {
     $("itAssignmentStatus").innerHTML = `<div class="detail-empty">No se pudo aplicar la reasignacion: ${escapeHtml(error.message)}</div>`;
+  } finally {
+    updateAssignmentButtons();
   }
 }
 
@@ -3124,7 +3228,7 @@ async function saveInternalUserSheetRow(event) {
 }
 
 function renderInformaticoReports() {
-  const groups = assignmentGroups();
+  const groups = assignmentSummaryGroups();
   const assignmentSelect = $("itManagerFilter");
   if (assignmentSelect) {
     const current = assignmentSelect.value;
@@ -3151,8 +3255,11 @@ function renderInformaticoReports() {
     .filter((row) => selectedDebtors.some((debtor) => bankRowMatchesDebtor(row, debtor)))
     .reduce((sum, row) => sum + Number(row.monto || 0), 0);
   const channelText = (entry) => String(entry.channel || "").toLowerCase();
-  setText("itManagerCases", fmtNum.format(selectedDebtors.length));
-  setText("itManagerDebt", fmtMoney.format(selectedDebtors.reduce((sum, debtor) => sum + Number(debtor.deudaTotal || debtor.saldoCapital || 0), 0)));
+  const selectedGroup = selectedAssignment ? groups.find(([name]) => name === selectedAssignment)?.[1] : null;
+  const officialCases = selectedGroup ? Number(selectedGroup.count || 0) : groups.reduce((sum, [, row]) => sum + Number(row.count || 0), 0);
+  const officialDebt = selectedGroup ? Number(selectedGroup.deudaTotal || 0) : groups.reduce((sum, [, row]) => sum + Number(row.deudaTotal || 0), 0);
+  setText("itManagerCases", fmtNum.format(officialCases || selectedDebtors.length));
+  setText("itManagerDebt", fmtMoney.format(officialDebt || selectedDebtors.reduce((sum, debtor) => sum + Number(debtor.deudaTotal || debtor.saldoCapital || 0), 0)));
   setText("itManagerEntries", fmtNum.format(entries.length));
   setText("itManagerAgreements", fmtNum.format(agreements.length));
   setText("itManagerCollected", fmtMoney.format(filesCollected + bankCollected));
@@ -3688,9 +3795,8 @@ function bindEvents() {
   });
   $("itImportForm")?.addEventListener("submit", previewInformaticoImport);
   $("itAssignmentForm")?.addEventListener("submit", saveInformaticoAssignment);
-  $("itAssignmentPreview")?.addEventListener("click", renderInformaticoAssignmentPreview);
   $("itAssignmentKeys")?.addEventListener("input", renderInformaticoAssignmentPreview);
-  $("itAssignmentTarget")?.addEventListener("change", renderInformaticoAssignmentPreview);
+  $("itAssignmentTarget")?.addEventListener("change", handleAssignmentTargetChange);
   ["itManagerFilter", "itManagerFrom", "itManagerTo"].forEach((id) => $(id)?.addEventListener("input", renderInformaticoReports));
   $("itClearManagerFilters")?.addEventListener("click", () => {
     $("itManagerFilter").value = "";

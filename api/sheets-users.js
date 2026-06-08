@@ -36,7 +36,7 @@ function firstHeaderIndex(headers, aliases) {
 }
 
 function assignmentKey(value) {
-  return normalizeHeader(value);
+  return normalizeUsername(value);
 }
 
 function normalizeRole(value) {
@@ -241,9 +241,38 @@ async function saveUser(input) {
   const parsed = await readAssignedSheet();
   const name = String(input.assignmentName || input.displayName || "").trim();
   if (!name) throw new Error("Asignacion requerida.");
-  const target = parsed.users.find((user) => normalizeHeader(user.assignmentName) === normalizeHeader(name)
+  let target = parsed.users.find((user) => assignmentKey(user.assignmentName) === assignmentKey(name)
     || normalizeUsername(user.username) === normalizeUsername(input.username));
-  if (!target) throw new Error(`No existe asignado en hoja Asignados: ${name}`);
+
+  if (!target) {
+    const nameIndex = parsed.headerMap.get("nombre");
+    const userIndex = parsed.headerMap.get("usuario");
+    const passIndex = parsed.headerMap.get("contrasena");
+    const roleIndex = parsed.headerMap.get("rol");
+    const activeIndex = parsed.headerMap.get("activo");
+    const newRow = Array(parsed.headers.length).fill("");
+    newRow[nameIndex] = name;
+    newRow[userIndex] = normalizeUsername(input.username || name);
+    newRow[passIndex] = input.password || "123456";
+    newRow[roleIndex] = normalizeRole(input.role || "callcenter");
+    newRow[activeIndex] = input.active === false ? "NO" : "SI";
+    const sheetRow = parsed.rows.length + 1;
+    const lastColumn = columnLetter(parsed.headers.length - 1);
+    await updateValues(SPREADSHEET_ID, `${ASSIGNED_SHEET}!A${sheetRow}:${lastColumn}${sheetRow}`, [newRow]);
+    target = publicUser({
+      username: newRow[userIndex],
+      displayName: name,
+      assignmentName: name,
+      role: normalizeRole(newRow[roleIndex]),
+      active: activeFromValue(newRow[activeIndex]),
+      password: newRow[passIndex],
+      cases: 0,
+      remesas: {},
+      sheetRow,
+    });
+    await upsertAppUser(target);
+    return target;
+  }
 
   const userIndex = parsed.headerMap.get("usuario");
   const passIndex = parsed.headerMap.get("contrasena");
