@@ -1,20 +1,12 @@
 const crypto = require("crypto");
 const { batchGetValues, getValues, updateValues, columnLetter } = require("./_google");
-const { hashPassword, loadInternalUser, normalizeUsername, supabaseFetch } = require("./_data");
+const { authErrorResponse, requireUser } = require("./_auth");
+const { hashPassword, normalizeUsername, supabaseFetch } = require("./_data");
 
 const SPREADSHEET_ID = (process.env.GOOGLE_SHEETS_AIEP_BASE_ID || "1JLprSdfbtg2MdPZbjQklsuvWcb4Vz696uTll0laGnFw").trim();
 const BASE_SHEET = "Base";
 const ASSIGNED_SHEET = "Asignados";
 const REQUIRED_HEADERS = ["Usuario", "Contrasena", "Rol", "Activo"];
-
-async function requireAdmin(body) {
-  const username = normalizeUsername(body.adminUser || "");
-  const pass = body.adminPass || "";
-  if ((username === "informatico" || username === "informatica") && pass === "789012") return true;
-  if (username === "remesa" && pass === "654321") return true;
-  const user = await loadInternalUser(username, pass);
-  return Boolean(user && ["informatico", "jefatura"].includes(user.role));
-}
 
 function normalizeHeader(value) {
   return String(value || "")
@@ -283,10 +275,7 @@ module.exports = async function handler(req, res) {
   }
   try {
     const body = req.body || {};
-    if (!(await requireAdmin(body))) {
-      res.status(403).json({ ok: false, error: "No autorizado" });
-      return;
-    }
+    await requireUser(req, ["informatico", "jefatura"]);
     if (body.action === "sync" || body.action === "list") {
       res.status(200).json({ ok: true, spreadsheetId: SPREADSHEET_ID, users: await syncUsers() });
       return;
@@ -297,6 +286,6 @@ module.exports = async function handler(req, res) {
     }
     res.status(400).json({ ok: false, error: "Accion no soportada" });
   } catch (error) {
-    res.status(500).json({ ok: false, error: error.message || "Error interno" });
+    authErrorResponse(res, error);
   }
 };

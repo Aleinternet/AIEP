@@ -22,6 +22,29 @@ function normalizeUsername(value = "") {
     .replace(/^\.+|\.+$/g, "");
 }
 
+function httpError(statusCode, message, code = "error") {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  error.code = code;
+  return error;
+}
+
+function normalizeAssignment(value = "") {
+  return String(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function validCallcenterAssignment(value = "") {
+  const assignment = normalizeAssignment(value);
+  if (!assignment) return "";
+  if (["callcenter", "call center", "sin asignacion", "sin asignación"].includes(assignment)) return "";
+  return assignment;
+}
+
 function hashPassword(password, salt) {
   return crypto.createHash("sha256").update(`${salt}:${password}`).digest("hex");
 }
@@ -137,8 +160,10 @@ function buildSummary(debtors) {
 function portfolioPathForRole({ role, username, assignment } = {}) {
   const base = "debtors?select=*&order=deuda_total.desc,id.asc";
   if (role !== "callcenter") return base;
-  const visibleAssignment = assignment || username;
-  if (!visibleAssignment || visibleAssignment === "callcenter") return base;
+  const visibleAssignment = assignment || "";
+  if (!validCallcenterAssignment(visibleAssignment)) {
+    throw httpError(403, "Call center sin asignacion valida.", "missing_assignment");
+  }
   return `${base}&or=(asignacion.eq.${encodeURIComponent(visibleAssignment)},usuario.eq.${encodeURIComponent(visibleAssignment)},equipo.eq.${encodeURIComponent(visibleAssignment)})`;
 }
 
@@ -206,6 +231,8 @@ module.exports = {
   loadDebtorByRut,
   loadInternalUser,
   hashPassword,
+  normalizeRut,
   normalizeUsername,
   supabaseFetch,
+  supabaseFetchAll,
 };

@@ -1,14 +1,6 @@
 const crypto = require("crypto");
-const { hashPassword, loadInternalUser, normalizeUsername, supabaseFetch } = require("./_data");
-
-async function requireAdmin(body) {
-  const username = normalizeUsername(body.adminUser || "");
-  const pass = body.adminPass || "";
-  if ((username === "informatico" || username === "informatica") && pass === "789012") return true;
-  if (username === "remesa" && pass === "654321") return true;
-  const user = await loadInternalUser(username, pass);
-  return Boolean(user && ["informatico", "jefatura"].includes(user.role));
-}
+const { authErrorResponse, requireUser } = require("./_auth");
+const { hashPassword, normalizeUsername, supabaseFetch } = require("./_data");
 
 function publicUser(row) {
   return {
@@ -89,10 +81,7 @@ module.exports = async function handler(req, res) {
 
   try {
     const body = req.body || {};
-    if (!(await requireAdmin(body))) {
-      res.status(403).json({ ok: false, error: "No autorizado" });
-      return;
-    }
+    await requireUser(req, ["informatico", "jefatura"]);
 
     if (body.action === "list") {
       res.status(200).json({ ok: true, users: await listUsers() });
@@ -111,6 +100,6 @@ module.exports = async function handler(req, res) {
 
     res.status(400).json({ ok: false, error: "Accion no soportada" });
   } catch (error) {
-    res.status(500).json({ ok: false, error: error.message || "Error interno" });
+    authErrorResponse(res, error);
   }
 };
