@@ -1,4 +1,5 @@
 const { loadInternalUser, normalizeUsername } = require("./_data");
+const { demoUser } = require("./_demo");
 
 function authError(statusCode, message, code) {
   const error = new Error(message);
@@ -81,6 +82,7 @@ function publicActor(user) {
     role: user.role,
     assignmentName,
     assignment_name: assignmentName,
+    demo: Boolean(user.demo),
     authSource: user.authSource || "app_users",
   };
 }
@@ -89,8 +91,9 @@ async function requireUser(req, allowedRoles = []) {
   const { username, password } = extractCredentials(req);
   if (!username || !password) throw authError(401, "Credenciales requeridas", "missing_credentials");
 
-  const dbUser = await loadInternalUser(username, password);
-  const actor = dbUser ? publicActor(dbUser) : legacyBaseUser(username, password);
+  const demo = demoUser(username, password);
+  const dbUser = demo ? null : await loadInternalUser(username, password);
+  const actor = demo ? publicActor(demo) : dbUser ? publicActor(dbUser) : legacyBaseUser(username, password);
   if (!actor) throw authError(401, "Credenciales invalidas", "invalid_credentials");
 
   if (allowedRoles.length && !allowedRoles.includes(actor.role)) {

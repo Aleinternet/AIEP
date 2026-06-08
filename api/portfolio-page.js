@@ -1,5 +1,6 @@
 const { authErrorResponse, requireUser } = require("./_auth");
 const { loadPortfolioPage } = require("./_data");
+const { demoPortfolio } = require("./_demo");
 
 function numberParam(value, fallback = 0) {
   const parsed = Number(value);
@@ -14,18 +15,21 @@ module.exports = async function handler(req, res) {
 
   try {
     const user = await requireUser(req, ["callcenter", "jefatura", "informatico"]);
-    const data = await loadPortfolioPage(
-      { role: user.role, username: user.username, assignment: user.assignmentName },
-      {
-        q: req.query.q || "",
-        state: req.query.state || "",
-        assignment: req.query.assignment || "",
-        minDebt: numberParam(req.query.minDebt, 0),
-        maxDebt: numberParam(req.query.maxDebt, 0),
-        limit: numberParam(req.query.limit, 120),
-        offset: numberParam(req.query.offset, 0),
-      },
-    );
+    const filters = {
+      q: req.query.q || "",
+      state: req.query.state || "",
+      assignment: req.query.assignment || "",
+      minDebt: numberParam(req.query.minDebt, 0),
+      maxDebt: numberParam(req.query.maxDebt, 0),
+      limit: numberParam(req.query.limit, 120),
+      offset: numberParam(req.query.offset, 0),
+    };
+    const data = user.demo
+      ? demoPortfolio(user, filters)
+      : await loadPortfolioPage(
+        { role: user.role, username: user.username, assignment: user.assignmentName },
+        filters,
+      );
     res.status(200).json({ ok: true, data });
   } catch (error) {
     authErrorResponse(res, error);

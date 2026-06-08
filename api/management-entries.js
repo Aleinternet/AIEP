@@ -4,6 +4,7 @@ const { loadDebtorFromInput } = require("./_debtors");
 const { assertDebtorAccess } = require("./_permissions");
 const { supabaseFetch } = require("./_data");
 const { optionalDate, safeString } = require("./_validators");
+const { canSeeDemoDebtor, demoDebtorFromInput, demoEntriesForDebtor } = require("./_demo");
 
 function parseBody(req) {
   if (!req.body) return {};
@@ -33,6 +34,12 @@ function publicEntry(row) {
 
 async function handleGet(req, res) {
   const user = await requireUser(req, ["callcenter", "jefatura", "informatico"]);
+  if (user.demo) {
+    const debtor = demoDebtorFromInput(req.query || {});
+    if (!debtor) return res.status(404).json({ ok: false, error: "Deudor demo no encontrado" });
+    if (!canSeeDemoDebtor(user, debtor)) return res.status(403).json({ ok: false, error: "No autorizado para este deudor demo" });
+    return res.status(200).json({ ok: true, debtor_id: debtor.id, entries: demoEntriesForDebtor(debtor).map(publicEntry) });
+  }
   const debtor = await loadDebtorFromInput(req.query || {});
   await assertDebtorAccess(user, debtor);
   const rows = await supabaseFetch(
@@ -44,6 +51,23 @@ async function handleGet(req, res) {
 async function handlePost(req, res) {
   const user = await requireUser(req, ["callcenter", "informatico"]);
   const body = parseBody(req);
+  if (user.demo) {
+    const debtor = demoDebtorFromInput(body);
+    if (!debtor) return res.status(404).json({ ok: false, error: "Deudor demo no encontrado" });
+    if (!canSeeDemoDebtor(user, debtor)) return res.status(403).json({ ok: false, error: "No autorizado para este deudor demo" });
+    const created = {
+      id: `demo-entry-${Date.now()}`,
+      debtor_id: debtor.id,
+      management_date: optionalDate(body.management_date || body.date, "fecha gestion") || new Date().toISOString().slice(0, 10),
+      channel: safeString(body.channel, { max: 80, field: "canal" }),
+      result: safeString(body.result, { max: 200, field: "resultado" }),
+      comment: safeString(body.comment, { max: 4000, field: "comentario" }),
+      created_by: user.username,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    return res.status(201).json({ ok: true, demo: true, entry: publicEntry(created) });
+  }
   const debtor = await loadDebtorFromInput(body);
   await assertDebtorAccess(user, debtor, { write: true });
 

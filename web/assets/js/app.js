@@ -74,6 +74,7 @@ const remoteLoadingDebtors = new Set();
 function applyRemoteData(remote) {
   if (!remote) return;
   data.generatedAt = remote.generatedAt || new Date().toISOString();
+  data.demo = Boolean(remote.demo);
   data.businessRules = remote.businessRules || data.businessRules;
   data.summary = remote.summary || data.summary;
   data.debtors = remote.debtors || [];
@@ -266,7 +267,34 @@ function readJson(key, fallback) {
 }
 
 function writeJson(key, value) {
+  if (session?.demo) return;
   localStorage.setItem(key, JSON.stringify(value));
+}
+
+function restorePersistentOperationalStore() {
+  store.entries = readJson("abg_entries", []);
+  store.contacts = readJson("abg_contacts", {});
+  store.files = readJson("abg_files", []);
+  store.offers = readJson("abg_offers", {});
+  store.agreements = readJson("abg_agreements", readJson("abg_offers", {}));
+  store.comments = readJson("abg_comments", {});
+  store.bankRows = readJson("abg_bank_rows", []);
+  store.audit = readJson("abg_audit", []);
+  store.campaignSelected = {};
+  store.remoteWarnings = {};
+}
+
+function resetDemoOperationalStore() {
+  store.entries = [];
+  store.contacts = {};
+  store.files = [];
+  store.offers = {};
+  store.agreements = {};
+  store.comments = {};
+  store.bankRows = [];
+  store.audit = [];
+  store.campaignSelected = {};
+  store.remoteWarnings = {};
 }
 
 function normalizeUsername(value) {
@@ -911,6 +939,7 @@ function renderNav() {
 
 function login(role, debtor = null, profile = null, password = "") {
   const username = role === "deudor" ? (debtor?.rutTitular || debtor?.rutAlumno || debtor?.rutDeudor) : (profile?.username || $("internalUser").value.trim());
+  const demoSession = Boolean(profile?.demo || debtor?.demo || data.demo);
   session = {
     role,
     debtorId: debtor?.id || null,
@@ -919,7 +948,10 @@ function login(role, debtor = null, profile = null, password = "") {
     assignmentName: profile?.assignmentName || "",
     internalUserId: profile?.id || "",
     authPassword: password,
+    demo: demoSession,
   };
+  if (demoSession) resetDemoOperationalStore();
+  else restorePersistentOperationalStore();
   sessionStartedAt = new Date();
   selectedDebtor = role === "deudor" ? debtor : null;
   document.body.classList.remove("logged-out");

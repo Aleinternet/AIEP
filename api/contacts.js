@@ -4,6 +4,7 @@ const { loadDebtorFromInput } = require("./_debtors");
 const { assertDebtorAccess } = require("./_permissions");
 const { supabaseFetch } = require("./_data");
 const { contactStatus, contactType, contactValue, safeString, uuid } = require("./_validators");
+const { canSeeDemoDebtor, demoContactsForDebtor, demoDebtorFromInput } = require("./_demo");
 
 function parseBody(req) {
   if (!req.body) return {};
@@ -46,6 +47,12 @@ async function loadContact(id) {
 
 async function handleGet(req, res) {
   const user = await requireUser(req, ["callcenter", "jefatura", "informatico"]);
+  if (user.demo) {
+    const debtor = demoDebtorFromInput(req.query || {});
+    if (!debtor) return res.status(404).json({ ok: false, error: "Deudor demo no encontrado" });
+    if (!canSeeDemoDebtor(user, debtor)) return res.status(403).json({ ok: false, error: "No autorizado para este deudor demo" });
+    return res.status(200).json({ ok: true, debtor_id: debtor.id, contacts: demoContactsForDebtor(debtor).map(publicContact) });
+  }
   const debtor = await loadDebtorFromInput(req.query || {});
   await assertDebtorAccess(user, debtor);
   const rows = await supabaseFetch(
@@ -57,6 +64,25 @@ async function handleGet(req, res) {
 async function handlePost(req, res) {
   const user = await requireUser(req, ["callcenter", "informatico"]);
   const body = parseBody(req);
+  if (user.demo) {
+    const debtor = demoDebtorFromInput(body);
+    if (!debtor) return res.status(404).json({ ok: false, error: "Deudor demo no encontrado" });
+    if (!canSeeDemoDebtor(user, debtor)) return res.status(403).json({ ok: false, error: "No autorizado para este deudor demo" });
+    const type = contactType(body.type);
+    const created = {
+      id: `demo-contact-${Date.now()}`,
+      debtor_id: debtor.id,
+      type,
+      value: contactValue(type, body.value),
+      status: contactStatus(body.status),
+      category: safeString(body.category, { max: 120, field: "categoria" }),
+      note: safeString(body.note ?? body.comment, { max: 1200, field: "nota" }),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      deleted_at: null,
+    };
+    return res.status(201).json({ ok: true, demo: true, contact: publicContact(created) });
+  }
   const debtor = await loadDebtorFromInput(body);
   await assertDebtorAccess(user, debtor, { write: true });
   const type = contactType(body.type);
@@ -89,6 +115,22 @@ async function handlePost(req, res) {
 async function handlePatch(req, res) {
   const user = await requireUser(req, ["callcenter", "informatico"]);
   const body = parseBody(req);
+  if (user.demo) {
+    const type = contactType(body.type || "telefono");
+    const updated = {
+      id: body.id || req.query?.id || `demo-contact-${Date.now()}`,
+      debtor_id: body.debtor_id || body.debtorId || "",
+      type,
+      value: contactValue(type, body.value || "900000000"),
+      status: contactStatus(body.status || "sin_validar"),
+      category: safeString(body.category, { max: 120, field: "categoria" }),
+      note: safeString(body.note ?? body.comment, { max: 1200, field: "nota" }),
+      deleted_at: body.deleted === true || body.delete === true || body.action === "delete" ? new Date().toISOString() : null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    return res.status(200).json({ ok: true, demo: true, contact: publicContact(updated) });
+  }
   const before = await loadContact(body.id || req.query?.id);
   const debtor = await assertDebtorAccess(user, before.debtor_id, { write: true });
 
