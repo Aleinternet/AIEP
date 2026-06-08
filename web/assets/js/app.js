@@ -65,6 +65,8 @@ let editingInternalUsers = new Set();
 let informaticoPortfolioTimer = null;
 let informaticoSearchCache = new Map();
 let informaticoSortedDebtors = null;
+let informaticoPortfolioRequestId = 0;
+let informaticoPortfolioLoading = false;
 const remoteLoadedDebtors = new Set();
 const remoteLoadingDebtors = new Set();
 
@@ -75,6 +77,7 @@ function applyRemoteData(remote) {
   data.summary = remote.summary || data.summary;
   data.debtors = remote.debtors || [];
   data.bankMovements = remote.bankMovements || [];
+  data.page = remote.page || null;
   invalidateInformaticoCaches();
 }
 
@@ -592,6 +595,46 @@ function informaticoSearchText(debtor) {
 function scheduleInformaticoPortfolioRender() {
   window.clearTimeout(informaticoPortfolioTimer);
   informaticoPortfolioTimer = window.setTimeout(renderInformaticoPortfolio, 180);
+}
+
+function informaticoPortfolioParams() {
+  const params = new URLSearchParams({
+    limit: ($("itSearch")?.value || "").trim() ? "80" : "120",
+    offset: "0",
+  });
+  const q = $("itSearch")?.value || "";
+  const state = $("itStateFilter")?.value || "";
+  const assignment = $("itAssignmentFilter")?.value || "";
+  const minDebt = parseMoney($("itDebtMin")?.value || "");
+  const maxDebt = parseMoney($("itDebtMax")?.value || "");
+  if (q.trim()) params.set("q", q.trim());
+  if (state) params.set("state", state);
+  if (assignment) params.set("assignment", assignment);
+  if (minDebt) params.set("minDebt", String(minDebt));
+  if (maxDebt) params.set("maxDebt", String(maxDebt));
+  return params;
+}
+
+async function loadInformaticoPortfolioPage() {
+  const requestId = ++informaticoPortfolioRequestId;
+  informaticoPortfolioLoading = true;
+  const rowsNode = $("itPortfolioRows");
+  if (rowsNode) rowsNode.innerHTML = `<tr><td colspan="13">Cargando cartera oficial...</td></tr>`;
+  try {
+    const json = await requestJson(`/api/portfolio-page?${informaticoPortfolioParams().toString()}`, {
+      headers: operationalApiHeaders(),
+    });
+    if (requestId !== informaticoPortfolioRequestId) return false;
+    applyRemoteData(json.data);
+    informaticoPortfolioLoading = false;
+    renderInformaticoPortfolio({ skipRemote: true });
+    return true;
+  } catch (error) {
+    if (requestId !== informaticoPortfolioRequestId) return false;
+    informaticoPortfolioLoading = false;
+    if (rowsNode) rowsNode.innerHTML = `<tr><td colspan="13">No se pudo cargar cartera oficial: ${escapeHtml(error.message || "Error desconocido")}</td></tr>`;
+    return false;
+  }
 }
 
 function parseMoney(value) {
@@ -2451,10 +2494,14 @@ function filteredInformaticoDebtors(limit = 800) {
   return rows;
 }
 
-function renderInformaticoPortfolio() {
+function renderInformaticoPortfolio(options = {}) {
   if (informaticoPortfolioTimer) {
     window.clearTimeout(informaticoPortfolioTimer);
     informaticoPortfolioTimer = null;
+  }
+  if (session?.role === "informatico" && !options.skipRemote && !informaticoPortfolioLoading) {
+    loadInformaticoPortfolioPage();
+    return;
   }
   const hasSearch = Boolean(($("itSearch")?.value || "").trim());
   const rows = filteredInformaticoDebtors(hasSearch ? 300 : 800);

@@ -68,6 +68,30 @@ async function supabaseFetch(path, options = {}) {
   return response.json();
 }
 
+async function supabaseFetchWithCount(path, options = {}) {
+  requireSupabaseEnv();
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    ...options,
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      "Content-Type": "application/json",
+      Prefer: "count=exact",
+      ...(options.headers || {}),
+    },
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`Supabase ${response.status}: ${detail}`);
+  }
+  const contentRange = response.headers.get("content-range") || "";
+  const total = Number(contentRange.split("/")[1]);
+  return {
+    rows: await response.json(),
+    count: Number.isFinite(total) ? total : null,
+  };
+}
+
 async function supabaseFetchAll(path, pageSize = 1000) {
   const rows = [];
   let from = 0;
@@ -82,6 +106,38 @@ async function supabaseFetchAll(path, pageSize = 1000) {
   }
 
   return rows;
+}
+
+function businessRules() {
+  return {
+    discountRate: 0.5,
+    offerFormula: "saldo_capital * 50%",
+    commissionRate: 0.25,
+    bankAccount: "Banco BCI - Comercial Remesa SpA - RUT 76.976.117-9 - Cuenta Corriente 27826341",
+  };
+}
+
+function contactPathForDebtors(ids) {
+  if (!ids.length) return "";
+  const quoted = ids.map((id) => `"${String(id).replace(/"/g, '\\"')}"`).join(",");
+  const query = new URLSearchParams({
+    select: "debtor_id,type,value",
+    debtor_id: `in.(${quoted})`,
+    order: "debtor_id.asc,type.asc,value.asc",
+  });
+  return `contacts?${query.toString()}`;
+}
+
+async function contactsForDebtorRows(debtRows) {
+  const ids = debtRows.map((row) => row.id).filter(Boolean);
+  if (!ids.length) return new Map();
+  const contacts = await supabaseFetch(contactPathForDebtors(ids));
+  const contactsByDebtor = new Map();
+  for (const contact of contacts) {
+    if (!contactsByDebtor.has(contact.debtor_id)) contactsByDebtor.set(contact.debtor_id, []);
+    contactsByDebtor.get(contact.debtor_id).push(contact);
+  }
+  return contactsByDebtor;
 }
 
 function mapDebtor(row, contacts = []) {
@@ -167,6 +223,76 @@ function portfolioPathForRole({ role, username, assignment } = {}) {
   return `${base}&or=(asignacion.eq.${encodeURIComponent(visibleAssignment)},usuario.eq.${encodeURIComponent(visibleAssignment)},equipo.eq.${encodeURIComponent(visibleAssignment)})`;
 }
 
+function appendPortfolioFilters(params, context = {}, filters = {}) {
+  if (context.role === "callcenter") {
+    const visibleAssignment = context.assignment || "";
+    if (!validCallcenterAssignment(visibleAssignment)) {
+      throw httpError(403, "Call center sin asignacion valida.", "missing_assignment");
+    }
+    params.set("or", `(asignacion.eq.${visibleAssignment},usuario.eq.${visibleAssignment},equipo.eq.${visibleAssignment})`);
+  }
+
+  if (filters.state) params.set("estado", `eq.${filters.state}`);
+  if (filters.assignment && context.role !== "callcenter") params.set("asignacion", `eq.${filters.assignment}`);
+  if (filters.minDebt) params.append("deuda_total", `gte.${Number(filters.minDebt)}`);
+  if (filters.maxDebt) params.append("deuda_total", `lte.${Number(filters.maxDebt)}`);
+
+  const q = String(filters.q || "").trim();
+  if (q && context.role !== "callcenter") {
+    const rut = normalizeRut(q);
+    const text = q
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-zA-Z0-9.\-\s]/g, " ")
+      .trim();
+    const safe = text.replace(/\*/g, " ");
+    const filtersOr = [
+      rut ? `rut_deudor_normalizado.ilike.*${rut}*` : "",
+      rut ? `rut_titular_normalizado.ilike.*${rut}*` : "",
+      rut ? `rut_alumno_normalizado.ilike.*${rut}*` : "",
+      `id.ilike.*${safe}*`,
+      `nombre_titular.ilike.*${safe}*`,
+      `nombre_alumno.ilike.*${safe}*`,
+      `comuna.ilike.*${safe}*`,
+      `rol.ilike.*${safe}*`,
+      `tribunal.ilike.*${safe}*`,
+      `asignacion.ilike.*${safe}*`,
+    ].filter(Boolean);
+    params.set("or", `(${filtersOr.join(",")})`);
+  }
+}
+
+async function loadPortfolioPage(context = {}, filters = {}) {
+  const limit = Math.min(Math.max(Number(filters.limit || 120), 1), 300);
+  const offset = Math.max(Number(filters.offset || 0), 0);
+  const params = new URLSearchParams({
+    select: "*",
+    order: "deuda_total.desc,id.asc",
+    limit: String(limit),
+    offset: String(offset),
+  });
+  appendPortfolioFilters(params, context, filters);
+  const { rows: debtRows, count } = await supabaseFetchWithCount(`debtors?${params.toString()}`);
+  const contactsByDebtor = await contactsForDebtorRows(debtRows);
+  const debtors = debtRows.map((row) => mapDebtor(row, contactsByDebtor.get(row.id) || []));
+  const summary = buildSummary(debtors);
+  if (count !== null) summary.totalRegistros = count;
+  return {
+    generatedAt: new Date().toISOString(),
+    businessRules: businessRules(),
+    summary,
+    debtors,
+    bankMovements: [],
+    page: {
+      limit,
+      offset,
+      count,
+      returned: debtors.length,
+      hasMore: count === null ? debtors.length === limit : offset + debtors.length < count,
+    },
+  };
+}
+
 async function loadPortfolio(context = {}) {
   const debtRows = await supabaseFetchAll(portfolioPathForRole(context));
   const contacts = await supabaseFetchAll("contacts?select=debtor_id,type,value&order=debtor_id.asc,type.asc,value.asc");
@@ -178,12 +304,7 @@ async function loadPortfolio(context = {}) {
   const debtors = debtRows.map((row) => mapDebtor(row, contactsByDebtor.get(row.id) || []));
   return {
     generatedAt: new Date().toISOString(),
-    businessRules: {
-      discountRate: 0.5,
-      offerFormula: "saldo_capital * 50%",
-      commissionRate: 0.25,
-      bankAccount: "Banco BCI - Comercial Remesa SpA - RUT 76.976.117-9 - Cuenta Corriente 27826341",
-    },
+    businessRules: businessRules(),
     summary: buildSummary(debtors),
     debtors,
     bankMovements: [],
@@ -228,6 +349,7 @@ async function loadInternalUser(username, password) {
 
 module.exports = {
   loadPortfolio,
+  loadPortfolioPage,
   loadDebtorByRut,
   loadInternalUser,
   hashPassword,
