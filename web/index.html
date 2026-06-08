@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>ABG RECOV | Plataforma Cobranzas AIEP</title>
-    <link rel="stylesheet" href="assets/css/styles.css?v=20260607-2">
+    <link rel="stylesheet" href="assets/css/styles.css?v=20260608-callcenter1">
   </head>
   <body class="logged-out">
     <section class="login-screen" id="loginScreen">
@@ -101,8 +101,8 @@
         <div class="workbench">
           <section class="panel">
             <div class="panel-head">
-              <h2>Deudores priorizados</h2>
-              <span>ordenados de mayor a menor saldo capital</span>
+              <h2>Filtros</h2>
+              <span>la grilla mantiene deudores ordenados por saldo capital</span>
             </div>
             <div class="toolbar">
               <select id="execStateFilter"><option value="">Todos los estados</option></select>
@@ -145,36 +145,14 @@
                 <input id="execManagementTo" type="date">
               </label>
               <button id="clearExecFilters" type="button">Limpiar filtros</button>
-              <button id="clearCampaignExcluded" type="button">Limpiar X</button>
-            </div>
-            <section class="campaign-panel collapsed" id="campaignPanel">
-              <div class="campaign-head">
-                <div>
-                  <h3>Envios masivos</h3>
-                  <span id="campaignStatus">Sin campana activa</span>
-                </div>
-                <div class="campaign-head-actions">
-                  <button id="toggleCampaignPanel" type="button" class="mail-action">Mostrar</button>
-                  <button id="stopCampaign" type="button" class="danger-soft">Detener</button>
-                </div>
-              </div>
-              <div class="campaign-grid" id="campaignBody" hidden>
-                <label>Cantidad
-                  <input id="campaignLimit" type="number" min="1" max="300" value="20">
-                </label>
-                <label>Intervalo segundos
-                  <input id="campaignInterval" type="number" min="5" max="600" value="20">
-                </label>
-                <label>Deuda desde
-                  <input id="campaignDebtMin" inputmode="numeric" placeholder="$0">
-                </label>
-                <label>Deuda hasta
-                  <input id="campaignDebtMax" inputmode="numeric" placeholder="Sin tope">
-                </label>
-                <div class="campaign-actions">
-                  <button id="startEmailCampaign" type="button" class="mail-action">Correo masivo</button>
-                  <button id="startWhatsappCampaign" type="button" class="whatsapp-action">WhatsApp masivo</button>
-                </div>
+              <button id="clearCampaignSelection" type="button">Deseleccionar</button>
+              <button id="startEmailCampaign" type="button" class="mail-action">Correo masivo</button>
+              <button id="startWhatsappCampaign" type="button" class="whatsapp-action">WhatsApp masivo</button>
+              <button id="stopCampaign" type="button" class="danger-soft">Detener</button>
+              <input id="campaignLimit" type="hidden" value="9999">
+              <div class="campaign-inline">
+                <span id="selectionSummary">0 seleccionados - $0</span>
+                <span id="campaignStatus">Sin campana activa</span>
                 <label class="helper-toggle">
                   <input id="outlookClassicMode" type="checkbox">
                   Outlook Classic local
@@ -201,7 +179,7 @@
                   Omitir gestion hace 3 dias
                 </label>
               </div>
-            </section>
+            </div>
             <div class="table-wrap">
               <table id="executiveTable" class="executive-table">
                 <thead id="executiveHead"></thead>
@@ -212,7 +190,10 @@
           <aside class="panel side-panel">
             <div class="panel-head">
               <h2>Gestión <span id="selectedCommentIcon" class="comment-badge" hidden></span></h2>
-              <span id="execSelectedStatus">Seleccione deudor</span>
+              <div class="side-panel-actions">
+                <span id="execSelectedStatus">Seleccione deudor</span>
+                <button id="toggleExecutiveDetailPanel" type="button" class="side-panel-toggle" title="Ocultar panel" aria-label="Ocultar panel">›</button>
+              </div>
             </div>
             <div id="executiveDetail" class="detail-empty">Haga clic en un deudor para ver ficha, contactos y bitácora.</div>
           </aside>
@@ -555,6 +536,6 @@
 
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="data/app-data.js?v=20260604-1"></script>
-    <script src="assets/js/app.js?v=20260608-perf2"></script>
+    <script src="assets/js/app.js?v=20260608-callcenter1"></script>
   </body>
 </html>

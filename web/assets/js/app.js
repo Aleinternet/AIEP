@@ -38,7 +38,7 @@ const store = {
   offers: readJson("abg_offers", {}),
   agreements: readJson("abg_agreements", readJson("abg_offers", {})),
   comments: readJson("abg_comments", {}),
-  campaignExcluded: readJson("abg_campaign_excluded", {}),
+  campaignSelected: {},
   bankRows: readJson("abg_bank_rows", []),
   audit: readJson("abg_audit", []),
   internalUsers: [],
@@ -58,7 +58,7 @@ let campaignTotal = 0;
 let campaignSkippedToday = 0;
 let campaignSkippedByRules = 0;
 let campaignSkippedDuplicateContacts = 0;
-let lastExcludeIndex = null;
+let lastSelectionIndex = null;
 let whatsappWindow = null;
 let visibleUserPasswords = new Set();
 let editingInternalUsers = new Set();
@@ -730,40 +730,48 @@ function isIgnoredContact(debtor, type, value) {
   return contactRecord(debtor, type, value).status === "ignore";
 }
 
-function isCampaignExcluded(debtor) {
-  return Boolean(store.campaignExcluded[debtor.id]);
+function isCampaignSelected(debtor) {
+  return Boolean(store.campaignSelected[debtor.id]);
 }
 
-function toggleCampaignExcluded(event) {
+function toggleCampaignSelection(event) {
   event.preventDefault();
   event.stopPropagation();
   const id = event.currentTarget.dataset.debtorId;
   const index = Number(event.currentTarget.dataset.rowIndex);
   if (!id || Number.isNaN(index)) return;
 
-  const targetState = !store.campaignExcluded[id];
-  if (event.shiftKey && lastExcludeIndex !== null) {
-    const start = Math.min(lastExcludeIndex, index);
-    const end = Math.max(lastExcludeIndex, index);
+  const targetState = event.currentTarget.checked;
+  if (event.shiftKey && lastSelectionIndex !== null) {
+    const start = Math.min(lastSelectionIndex, index);
+    const end = Math.max(lastSelectionIndex, index);
     executiveRows.slice(start, end + 1).forEach((debtor) => {
-      if (targetState) store.campaignExcluded[debtor.id] = true;
-      else delete store.campaignExcluded[debtor.id];
+      if (targetState) store.campaignSelected[debtor.id] = true;
+      else delete store.campaignSelected[debtor.id];
     });
   } else {
-    if (targetState) store.campaignExcluded[id] = true;
-    else delete store.campaignExcluded[id];
+    if (targetState) store.campaignSelected[id] = true;
+    else delete store.campaignSelected[id];
   }
-  lastExcludeIndex = index;
-  writeJson("abg_campaign_excluded", store.campaignExcluded);
+  lastSelectionIndex = index;
   renderExecutiveRows();
 }
 
-function clearCampaignExcluded() {
-  store.campaignExcluded = {};
-  lastExcludeIndex = null;
-  writeJson("abg_campaign_excluded", store.campaignExcluded);
+function clearCampaignSelection() {
+  store.campaignSelected = {};
+  lastSelectionIndex = null;
   renderExecutiveRows();
-  setText("campaignStatus", "Exclusiones X limpiadas.");
+  setText("campaignStatus", "Seleccion limpiada.");
+}
+
+function selectedCampaignDebtors() {
+  return executiveRows.filter((debtor) => isCampaignSelected(debtor));
+}
+
+function updateSelectionSummary() {
+  const selected = selectedCampaignDebtors();
+  const total = selected.reduce((sum, debtor) => sum + (debtor.deudaTotal || debtor.saldoCapital || 0), 0);
+  setText("selectionSummary", `${selected.length} seleccionado${selected.length === 1 ? "" : "s"} - ${fmtMoney.format(total)}`);
 }
 
 function currentDebtorFiles() {
@@ -1083,7 +1091,6 @@ function renderExecutiveHead(managementDates) {
       <th>Ultima gestion</th>
       <th>Proxima gestion</th>
       <th>Convenio</th>
-      <th>Accion</th>
       ${managementDates.map((date) => `<th class="management-date-head">Gestion ${managementDateLabel(date)}</th>`).join("")}
     </tr>
   `;
@@ -1166,14 +1173,14 @@ function renderExecutiveRows() {
   const managementDates = visibleManagementDates();
   renderExecutiveHead(managementDates);
   if ($("executiveTable")) {
-    $("executiveTable").style.minWidth = `${1560 + (managementDates.length * 170)}px`;
+    $("executiveTable").style.minWidth = `${1420 + (managementDates.length * 170)}px`;
   }
   executiveRows = sortedExecutiveDebtors();
   $("executiveRows").innerHTML = executiveRows.slice(0, 350).map((d, index) => `
-    <tr data-index="${index}" class="${rowClass(d)} ${isCampaignExcluded(d) ? "campaign-excluded-row" : ""} ${selectedDebtor?.id === d.id ? "selected-row" : ""}">
+    <tr data-index="${index}" class="${rowClass(d)} ${isCampaignSelected(d) ? "campaign-selected-row" : ""} ${selectedDebtor?.id === d.id ? "selected-row" : ""}">
       <td class="sticky-col">
         <div class="name-cell">
-          <button type="button" class="exclude-toggle ${isCampaignExcluded(d) ? "active" : ""}" data-debtor-id="${escapeAttr(d.id)}" data-row-index="${index}" title="${isCampaignExcluded(d) ? "Incluir en masivos" : "Excluir de masivos"} · Shift marca rango">${isCampaignExcluded(d) ? "X" : ""}</button>
+          <input type="checkbox" class="select-toggle" data-debtor-id="${escapeAttr(d.id)}" data-row-index="${index}" title="Seleccionar para masivos - Shift marca rango" ${isCampaignSelected(d) ? "checked" : ""}>
           <div>
             <span class="agreement-dot ${agreementDotClass(d)}"></span>${commentCount(d) ? `<span class="comment-badge row-comment-badge" title="Tiene comentarios internos"></span>` : ""}<strong>${d.nombreTitular || "Sin nombre"}</strong><br><span class="muted">${d.nombreAlumno || "Alumno no informado"}</span>
           </div>
@@ -1190,10 +1197,10 @@ function renderExecutiveRows() {
       <td>${lastManagementAgeLabel(d)}</td>
       <td>${d.proximaGestion || "-"}</td>
       <td><strong>${getOfferAmount(d) ? fmtMoney.format(getOfferAmount(d)) : "Sin convenio"}</strong></td>
-      <td><button type="button" class="sheet-action" data-open-debtor="${escapeAttr(d.id)}">Ver</button></td>
       ${managementDates.map((date) => `<td class="management-date-cell">${managementDateSummary(d, date)}</td>`).join("")}
     </tr>
   `).join("");
+  updateSelectionSummary();
   document.querySelectorAll("#executiveRows tr").forEach((row) => {
     row.addEventListener("click", () => {
       selectedDebtor = executiveRows[Number(row.dataset.index)];
@@ -1202,7 +1209,7 @@ function renderExecutiveRows() {
       loadOperationalForDebtor(selectedDebtor);
     });
   });
-  document.querySelectorAll("[data-debtor-id].exclude-toggle").forEach((btn) => btn.addEventListener("click", toggleCampaignExcluded));
+  document.querySelectorAll("[data-debtor-id].select-toggle").forEach((btn) => btn.addEventListener("click", toggleCampaignSelection));
 }
 
 function rowClass(debtor) {
@@ -1280,9 +1287,20 @@ function primaryEmail(debtor) {
   return (debtor.correos || []).find((email) => !isIgnoredContact(debtor, "correo", email)) || debtor.correos?.[0] || "";
 }
 
+function toggleExecutiveDetailPanel() {
+  const workbench = document.querySelector("#executiveHome .workbench");
+  if (!workbench) return;
+  const hidden = workbench.classList.toggle("detail-panel-hidden");
+  const btn = $("toggleExecutiveDetailPanel");
+  if (btn) {
+    btn.textContent = hidden ? "‹" : "›";
+    btn.title = hidden ? "Mostrar panel" : "Ocultar panel";
+    btn.setAttribute("aria-label", hidden ? "Mostrar panel" : "Ocultar panel");
+  }
+}
+
 function renderExecutiveDetail() {
   const d = selectedDebtor;
-  document.querySelector("#executiveHome .workbench")?.classList.toggle("detail-collapsed", !d);
   if (!d) {
     setText("execSelectedStatus", "Seleccione deudor");
     if ($("selectedCommentIcon")) $("selectedCommentIcon").hidden = true;
@@ -1344,12 +1362,12 @@ function renderExecutiveDetail() {
     <button id="openAgreementModal" type="button" class="primary-action">Nuevo / editar convenio</button>
     <h3>Nueva gestión</h3>
     <form id="execManagementForm" class="form-grid stacked">
-      <label>Fecha gestión<input type="date" name="date" value="${today()}" required></label>
-      <label>Canal<select name="channel"><option>Llamado</option><option>WhatsApp</option><option>Correo</option><option>Presencial</option></select></label>
-      <label>Resultado<select name="result"><option>Contactado</option><option>No contesta</option><option>Compromiso de pago</option><option>Teléfono inválido</option><option>Correo inválido</option><option>Solicita revisión</option><option>Pagó / comprobante</option></select></label>
-      <label class="wide">Comentario<textarea name="comment" rows="4" placeholder="Detalle de la gestión realizada"></textarea></label>
       <label class="wide">Adjuntar comprobante del deudor<input type="file" name="receipt" accept=".pdf,.jpg,.jpeg,.png,.webp"></label>
-      <button type="submit">Registrar gestión y comprobante</button>
+      <label>Fecha gestión<input type="date" name="date" value="${today()}" required></label>
+      <label>Canal<select name="channel"><option value="">Seleccione canal</option><option>Llamado</option><option>WhatsApp</option><option>Correo</option><option>Presencial</option></select></label>
+      <label>Resultado<select name="result"><option value="">Seleccione resultado</option><option>Contactado</option><option>No contesta</option><option>Compromiso de pago</option><option>Teléfono inválido</option><option>Correo inválido</option><option>Solicita revisión</option><option>Pagó / comprobante</option></select></label>
+      <label class="wide">Comentario<textarea name="comment" rows="4" placeholder="Detalle de la gestión realizada"></textarea></label>
+      <button type="submit" disabled>Guardar gestión</button>
     </form>
     <h3>Gestiones pasadas</h3>
     <div class="history-strip">${renderHistoryCards(d)}</div>
@@ -1376,10 +1394,19 @@ function renderExecutiveDetail() {
   const deleteButton = $("deleteAgreement");
   if (deleteButton) deleteButton.addEventListener("click", deleteAgreement);
   $("execManagementForm").addEventListener("submit", saveManagementEntry);
+  $("execManagementForm").querySelectorAll("select, textarea, input[type='file']").forEach((node) => {
+    node.addEventListener("input", updateManagementSaveState);
+    node.addEventListener("change", updateManagementSaveState);
+  });
+  updateManagementSaveState();
   document.querySelectorAll("[data-contact-action]").forEach((btn) => btn.addEventListener("click", updateContactStatus));
   document.querySelectorAll("[data-contact-save]").forEach((btn) => btn.addEventListener("click", saveContactMeta));
-  document.querySelectorAll("[data-contact-delete]").forEach((btn) => btn.addEventListener("click", deleteContactMeta));
-  document.querySelectorAll("[data-copy-message]").forEach((node) => node.addEventListener("click", copyContactMessage));
+  document.querySelectorAll("[data-contact-open]").forEach((node) => node.addEventListener("click", openContactAction));
+  document.querySelectorAll("[data-contact-category], [data-contact-comment]").forEach((node) => {
+    node.addEventListener("input", updateContactSaveButtons);
+    node.addEventListener("change", updateContactSaveButtons);
+  });
+  updateContactSaveButtons();
 }
 
 function detailItem(label, value) {
@@ -1600,9 +1627,16 @@ function renderContacts(debtor, type, values) {
     const saved = contactRecord(debtor, type, value);
     const cls = saved.status === "ok" ? "ok" : saved.status === "ignore" ? "ignore" : saved.status === "manual" ? "manual" : "";
     const message = buildContactMessage(debtor, type, value);
+    const openActions = type === "telefono"
+      ? `<button type="button" class="icon-button whatsapp-action" data-contact-open="whatsapp" data-copy-message="${escapeAttr(message)}" data-type="${type}" data-value="${escapeAttr(value)}" title="Abrir WhatsApp" aria-label="Abrir WhatsApp">W</button>
+         <button type="button" class="icon-button call-action" data-contact-open="call" data-type="${type}" data-value="${escapeAttr(value)}" title="Llamar desde el equipo" aria-label="Llamar desde el equipo">☎</button>`
+      : `<button type="button" class="icon-button mail-action" data-contact-open="mail" data-copy-message="${escapeAttr(message)}" data-type="${type}" data-value="${escapeAttr(value)}" title="Abrir correo" aria-label="Abrir correo">@</button>`;
     return `
       <article class="contact-item ${cls}">
-        <button type="button" class="contact-copy" data-copy-message="${escapeAttr(message)}" data-type="${type}" data-value="${escapeAttr(value)}" title="Abrir mensaje">${escapeHtml(value)}</button>
+        <div class="contact-main">
+          <span class="contact-value" title="Seleccione para copiar">${escapeHtml(value)}</span>
+          <div class="contact-open-actions">${openActions}</div>
+        </div>
         <span class="contact-status">${contactStatusLabel(saved.status)}${saved.date ? ` - ${new Date(saved.date).toLocaleDateString("es-CL")}` : ""}</span>
         <div class="contact-meta">
           <label>Categoria
@@ -1617,8 +1651,7 @@ function renderContacts(debtor, type, values) {
         <div class="contact-actions">
           <button type="button" data-contact-action="ok" data-type="${type}" data-value="${escapeAttr(value)}">Funciona</button>
           <button type="button" data-contact-action="ignore" data-type="${type}" data-value="${escapeAttr(value)}">No considerar</button>
-          <button type="button" data-contact-save data-type="${type}" data-value="${escapeAttr(value)}">Guardar</button>
-          <button type="button" data-contact-delete data-type="${type}" data-value="${escapeAttr(value)}" class="danger-soft">Borrar marca</button>
+          <button type="button" data-contact-save data-type="${type}" data-value="${escapeAttr(value)}" disabled>Guardar</button>
         </div>
       </article>
     `;
@@ -1772,6 +1805,42 @@ function copyContactMessage(event) {
   }
   openMailClient(value, message, buildEmailHtmlBody(selectedDebtor, value));
   $("copyStatus").textContent = "Correo abierto con mensaje preparado.";
+}
+
+function openContactAction(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  const action = event.currentTarget.dataset.contactOpen;
+  const message = event.currentTarget.dataset.copyMessage;
+  const type = event.currentTarget.dataset.type;
+  const value = event.currentTarget.dataset.value;
+  if (action === "whatsapp" || type === "telefono") {
+    if (action === "call") {
+      const phone = phoneForWhatsApp(value);
+      if (!phone) {
+        $("copyStatus").textContent = "Telefono no valido para llamar.";
+        return;
+      }
+      window.location.href = `tel:+${phone}`;
+      $("copyStatus").textContent = "Llamada enviada a la aplicacion telefonica configurada del equipo.";
+      return;
+    }
+    openWhatsAppClient(value, message);
+    $("copyStatus").textContent = whatsappLocalModeEnabled() ? "WhatsApp local activado para envio automatico." : "WhatsApp Web abierto con mensaje preparado.";
+    return;
+  }
+  openMailClient(value, message, buildEmailHtmlBody(selectedDebtor, value));
+  $("copyStatus").textContent = "Correo abierto con mensaje preparado.";
+}
+
+function updateContactSaveButtons() {
+  document.querySelectorAll("[data-contact-save]").forEach((button) => {
+    const type = button.dataset.type;
+    const value = button.dataset.value;
+    const category = document.querySelector(`[data-contact-category][data-type="${CSS.escape(type)}"][data-value="${CSS.escape(value)}"]`)?.value || "";
+    const comment = document.querySelector(`[data-contact-comment][data-type="${CSS.escape(type)}"][data-value="${CSS.escape(value)}"]`)?.value || "";
+    button.disabled = !(category.trim() || comment.trim());
+  });
 }
 
 function outlookClassicModeEnabled() {
@@ -2005,12 +2074,12 @@ function campaignSkippedText() {
 }
 
 function campaignTargets(type) {
-  const min = parseMoney($("campaignDebtMin").value);
-  const max = parseMoney($("campaignDebtMax").value);
+  const min = parseMoney($("execDebtMin")?.value || "");
+  const max = parseMoney($("execDebtMax")?.value || "");
   const limit = Math.max(1, Number($("campaignLimit").value || 1));
-  const source = sortedExecutiveDebtors();
+  const selected = selectedCampaignDebtors();
+  const source = selected.length ? selected : sortedExecutiveDebtors();
   const validDebtors = source
-    .filter((debtor) => !isCampaignExcluded(debtor))
     .filter((debtor) => debtor.deudaTotal >= min)
     .filter((debtor) => !max || debtor.deudaTotal <= max)
     .filter((debtor) => usableContacts(debtor, type).length);
@@ -2047,6 +2116,27 @@ function startCampaign(type) {
     setText("campaignStatus", `Sin contactos para el filtro seleccionado.${campaignSkippedText()}`);
     return;
   }
+  if (type === "correo") {
+    localStorage.setItem("abg_outlook_classic_mode", "1");
+    localStorage.setItem("abg_outlook_auto_send_mode", "1");
+    if ($("outlookClassicMode")) $("outlookClassicMode").checked = true;
+    if ($("outlookAutoSendMode")) $("outlookAutoSendMode").checked = true;
+    const selectedCount = selectedCampaignDebtors().length;
+    const sourceText = selectedCount ? `${selectedCount} deudores seleccionados` : "los filtros activos";
+    const ok = window.confirm(`Hay ${campaignQueue.length} correos disponibles para ${sourceText}. Antes de enviar se abrirá la selección de cuenta de Outlook Classic. ¿Continuar?`);
+    if (!ok) {
+      stopCampaign(false);
+      setText("campaignStatus", "Envio de correos cancelado.");
+      return;
+    }
+    selectOutlookAccount();
+    const ready = window.confirm("Seleccione la cuenta de Outlook Classic en la ventana local. Cuando termine, presione Aceptar para iniciar el envio.");
+    if (!ready) {
+      stopCampaign(false);
+      setText("campaignStatus", "Envio de correos cancelado antes de iniciar.");
+      return;
+    }
+  }
   setText("campaignStatus", `${campaignQueue.length} mensajes en cola. Siguiente: ${campaignTargetLabel(campaignQueue[0])}`);
   deliverCampaignItem();
 }
@@ -2078,10 +2168,7 @@ function deliverCampaignItem() {
   const sent = campaignTotal - campaignQueue.length;
   const next = campaignQueue.length ? ` Siguiente: ${campaignTargetLabel(campaignQueue[0])}.` : "";
   setText("campaignStatus", `${sent} enviados/preparados y registrados. Quedan ${campaignQueue.length}.${next}${campaignSkippedText()}`);
-  const requestedSeconds = Math.max(5, Number($("campaignInterval").value || 20));
-  const intervalSeconds = campaignChannel === "telefono" && whatsappLocalModeEnabled()
-    ? Math.max(35, requestedSeconds)
-    : requestedSeconds;
+  const intervalSeconds = campaignChannel === "correo" ? 1 : 12;
   const intervalMs = intervalSeconds * 1000;
   if (campaignQueue.length) campaignTimer = window.setTimeout(deliverCampaignItem, intervalMs);
 }
@@ -2244,18 +2331,41 @@ function deleteAgreement() {
   renderExecutiveDetail();
 }
 
+function managementFormHasInput(form) {
+  if (!form) return false;
+  const fd = new FormData(form);
+  const file = fd.get("receipt");
+  return Boolean(
+    String(fd.get("channel") || "").trim()
+    || String(fd.get("result") || "").trim()
+    || String(fd.get("comment") || "").trim()
+    || (file && file.size)
+  );
+}
+
+function updateManagementSaveState() {
+  const form = $("execManagementForm");
+  if (!form) return;
+  const button = form.querySelector("button[type='submit']");
+  if (button) button.disabled = !managementFormHasInput(form);
+}
+
 async function saveManagementEntry(event) {
   event.preventDefault();
   const form = event.currentTarget;
+  if (!managementFormHasInput(form)) return;
   const fd = new FormData(form);
+  const receipt = fd.get("receipt");
+  const channel = String(fd.get("channel") || "").trim() || (receipt && receipt.size ? "Comprobante" : "");
+  const result = String(fd.get("result") || "").trim() || (receipt && receipt.size ? "Comprobante adjunto" : "");
   const snapshot = snapshotOperationalDebtor(selectedDebtor);
   const entry = {
     id: `tmp-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     debtorId: selectedDebtor.id,
     debtorName: selectedDebtor.nombreTitular,
     date: fd.get("date"),
-    channel: fd.get("channel"),
-    result: fd.get("result"),
+    channel,
+    result,
     comment: fd.get("comment") || "Sin comentario",
     user: session.username,
     createdAt: new Date().toISOString(),
@@ -3328,6 +3438,7 @@ function bindEvents() {
     document.body.classList.toggle("sidebar-collapsed");
     $("sidebarToggle").textContent = document.body.classList.contains("sidebar-collapsed") ? "›" : "‹";
   });
+  $("toggleExecutiveDetailPanel")?.addEventListener("click", toggleExecutiveDetailPanel);
   $("globalSearch").addEventListener("input", renderExecutiveRows);
   $("execStateFilter").addEventListener("input", renderExecutiveRows);
   $("execContactFilter").addEventListener("input", renderExecutiveRows);
@@ -3340,13 +3451,7 @@ function bindEvents() {
   $("execManagementExactDate").addEventListener("input", renderExecutiveRows);
   $("execManagementFrom").addEventListener("input", renderExecutiveRows);
   $("execManagementTo").addEventListener("input", renderExecutiveRows);
-  $("clearCampaignExcluded").addEventListener("click", clearCampaignExcluded);
-  $("toggleCampaignPanel").addEventListener("click", () => {
-    const body = $("campaignBody");
-    body.hidden = !body.hidden;
-    $("campaignPanel").classList.toggle("collapsed", body.hidden);
-    $("toggleCampaignPanel").textContent = body.hidden ? "Mostrar" : "Ocultar";
-  });
+  $("clearCampaignSelection").addEventListener("click", clearCampaignSelection);
   $("clearExecFilters").addEventListener("click", () => {
     $("execStateFilter").value = "";
     $("execContactFilter").value = "";
@@ -3378,7 +3483,7 @@ function bindEvents() {
   $("whatsappLocalMode").addEventListener("change", (event) => {
     localStorage.setItem("abg_whatsapp_local_mode", event.currentTarget.checked ? "1" : "0");
   });
-  ["campaignDebtMin", "campaignDebtMax", "execDebtMin", "execDebtMax", "reportDebtMin", "reportDebtMax"].forEach((id) => $(id).addEventListener("blur", (event) => {
+  ["execDebtMin", "execDebtMax", "reportDebtMin", "reportDebtMax"].forEach((id) => $(id)?.addEventListener("blur", (event) => {
     const amount = parseMoney(event.currentTarget.value);
     event.currentTarget.value = amount ? fmtMoney.format(amount) : "";
     if (id.startsWith("exec")) renderExecutiveRows();
