@@ -128,14 +128,28 @@ function contactPathForDebtors(ids) {
   return `contacts?${query.toString()}`;
 }
 
-async function contactsForDebtorRows(debtRows) {
-  const ids = debtRows.map((row) => row.id).filter(Boolean);
+function chunkArray(values, size) {
+  const chunks = [];
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+  return chunks;
+}
+
+async function contactsForDebtorRows(debtRows, chunkSize = 100, concurrency = 4) {
+  const ids = [...new Set(debtRows.map((row) => row.id).filter(Boolean))];
   if (!ids.length) return new Map();
-  const contacts = await supabaseFetch(contactPathForDebtors(ids));
   const contactsByDebtor = new Map();
-  for (const contact of contacts) {
-    if (!contactsByDebtor.has(contact.debtor_id)) contactsByDebtor.set(contact.debtor_id, []);
-    contactsByDebtor.get(contact.debtor_id).push(contact);
+  const chunks = chunkArray(ids, chunkSize);
+  for (let index = 0; index < chunks.length; index += concurrency) {
+    const group = chunks.slice(index, index + concurrency);
+    const batches = await Promise.all(group.map((idsChunk) => supabaseFetchAll(contactPathForDebtors(idsChunk))));
+    for (const contacts of batches) {
+      for (const contact of contacts) {
+        if (!contactsByDebtor.has(contact.debtor_id)) contactsByDebtor.set(contact.debtor_id, []);
+        contactsByDebtor.get(contact.debtor_id).push(contact);
+      }
+    }
   }
   return contactsByDebtor;
 }
@@ -304,12 +318,9 @@ async function loadPortfolioPage(context = {}, filters = {}) {
 
 async function loadPortfolio(context = {}) {
   const debtRows = await supabaseFetchAll(portfolioPathForRole(context));
-  const contacts = await supabaseFetchAll("contacts?select=debtor_id,type,value&order=debtor_id.asc,type.asc,value.asc");
-  const contactsByDebtor = new Map();
-  for (const contact of contacts) {
-    if (!contactsByDebtor.has(contact.debtor_id)) contactsByDebtor.set(contact.debtor_id, []);
-    contactsByDebtor.get(contact.debtor_id).push(contact);
-  }
+  const contactsByDebtor = context.role === "callcenter"
+    ? await contactsForDebtorRows(debtRows)
+    : await contactsForAllDebtors();
   const debtors = debtRows.map((row) => mapDebtor(row, contactsByDebtor.get(row.id) || []));
   return {
     generatedAt: new Date().toISOString(),
@@ -318,6 +329,16 @@ async function loadPortfolio(context = {}) {
     debtors,
     bankMovements: [],
   };
+}
+
+async function contactsForAllDebtors() {
+  const contacts = await supabaseFetchAll("contacts?select=debtor_id,type,value&order=debtor_id.asc,type.asc,value.asc");
+  const contactsByDebtor = new Map();
+  for (const contact of contacts) {
+    if (!contactsByDebtor.has(contact.debtor_id)) contactsByDebtor.set(contact.debtor_id, []);
+    contactsByDebtor.get(contact.debtor_id).push(contact);
+  }
+  return contactsByDebtor;
 }
 
 async function loadDebtorByRut(rut) {
