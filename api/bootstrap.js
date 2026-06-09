@@ -13,7 +13,7 @@ module.exports = async function handler(req, res) {
     const context = { role: user.role, username: user.username, assignment: user.assignmentName };
     const data = user.demo
       ? demoPortfolio(user, { limit: 1000, offset: 0 })
-      : user.role === "informatico"
+      : ["informatico", "jefatura"].includes(user.role)
       ? await loadPortfolioPage(context, { limit: 120, offset: 0 })
       : await loadPortfolio(context);
     res.status(200).json({ ok: true, role: user.role, user, data });

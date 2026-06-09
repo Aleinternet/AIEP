@@ -185,7 +185,7 @@ async function loadHealthFromApi() {
 const views = {
   deudor: [{ id: "debtorHome", label: "Mi deuda" }, { id: "localFiles", label: "Mis archivos" }],
   ejecutivo: [{ id: "executiveHome", label: "Gestión deudores" }, { id: "localFiles", label: "Comprobantes" }],
-  jefatura: [{ id: "managementHome", label: "Dashboard" }, { id: "managementAgreements", label: "Convenios" }, { id: "managementBank", label: "Cartolas" }, { id: "localFiles", label: "Repositorio" }],
+  jefatura: [{ id: "managementHome", label: "Dashboard" }, { id: "informaticoPortfolio", label: "Cartera total" }, { id: "managementAgreements", label: "Convenios" }, { id: "managementBank", label: "Cartolas" }, { id: "localFiles", label: "Repositorio" }],
 };
 
 const titles = {
@@ -248,6 +248,7 @@ Object.assign(routeByView, {
 Object.assign(viewByRoute, {
   informatico: "informaticoHome",
   "informatico/cartera": "informaticoPortfolio",
+  "jefatura/cartera": "informaticoPortfolio",
   "informatico/importar": "informaticoImport",
   "informatico/reasignaciones": "informaticoAssignments",
   "informatico/auditoria": "informaticoAudit",
@@ -948,8 +949,8 @@ function showView(id) {
   document.querySelectorAll(".view").forEach((view) => view.classList.toggle("active", view.id === id));
   document.querySelectorAll(".nav-item").forEach((btn) => btn.classList.toggle("active", btn.dataset.view === id));
   setText("viewTitle", titles[id] || "Plataforma");
-  $("globalSearchBox").hidden = session?.role !== "ejecutivo";
-  const route = routeByView[id];
+  $("globalSearchBox").hidden = true;
+  const route = session?.role === "jefatura" && id === "informaticoPortfolio" ? "jefatura/cartera" : routeByView[id];
   if (route && location.hash.replace(/^#\/?/, "") !== route) history.replaceState(null, "", `#/${route}`);
   if (id === "executiveHome") {
     renderExecutiveRows();
@@ -1084,7 +1085,7 @@ async function handleInternalLogin(event) {
   $("internalLoginError").textContent = "";
   if (submitButton) submitButton.disabled = true;
   try {
-    $("internalLoginError").textContent = "Validando usuario y cargando cartera desde la nube...";
+    $("internalLoginError").textContent = "Validando usuario";
     const json = await loadPortfolioFromApi(user, pass);
     const remoteUser = json.user || {
       username: user,
@@ -1227,7 +1228,7 @@ function lastManagementAgeLabel(debtor) {
 }
 
 function executiveFilter(debtor) {
-  const q = normalizeText($("globalSearch").value);
+  const q = normalizeText($("execSearch")?.value || "");
   const state = $("execStateFilter").value;
   const contact = $("execContactFilter").value;
   const recent = $("execRecentFilter")?.value || "";
@@ -2772,7 +2773,7 @@ function renderInformaticoPortfolio(options = {}) {
     window.clearTimeout(informaticoPortfolioTimer);
     informaticoPortfolioTimer = null;
   }
-  if (session?.role === "informatico" && !options.skipRemote && !informaticoPortfolioLoading) {
+  if ((session?.role === "informatico" || session?.role === "jefatura") && !options.skipRemote && !informaticoPortfolioLoading) {
     loadInformaticoPortfolioPage();
     return;
   }
@@ -3802,7 +3803,7 @@ function bindEvents() {
     $("sidebarToggle").textContent = document.body.classList.contains("sidebar-collapsed") ? "›" : "‹";
   });
   $("toggleExecutiveDetailPanel")?.addEventListener("click", toggleExecutiveDetailPanel);
-  $("globalSearch").addEventListener("input", renderExecutiveRows);
+  $("execSearch").addEventListener("input", renderExecutiveRows);
   $("execStateFilter").addEventListener("input", renderExecutiveRows);
   $("execContactFilter").addEventListener("input", renderExecutiveRows);
   $("execRecentFilter").addEventListener("input", renderExecutiveRows);
@@ -3827,7 +3828,7 @@ function bindEvents() {
     $("execManagementExactDate").value = "";
     $("execManagementFrom").value = "";
     $("execManagementTo").value = "";
-    $("globalSearch").value = "";
+    $("execSearch").value = "";
     renderExecutiveRows();
   });
   $("startEmailCampaign").addEventListener("click", () => startCampaign("correo"));

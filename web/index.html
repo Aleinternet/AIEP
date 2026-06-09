@@ -73,7 +73,7 @@
             <span id="dollarValue">Dólar: cargando</span>
           </div>
         </div>
-        <div class="searchbox" id="globalSearchBox">
+        <div class="searchbox" id="globalSearchBox" hidden>
           <span>Buscar</span>
           <input id="globalSearch" type="search" placeholder="RUT, nombre, alumno o estado">
         </div>
@@ -105,6 +105,9 @@
               <span>la grilla mantiene deudores ordenados por saldo capital</span>
             </div>
             <div class="toolbar">
+              <label>Buscar
+                <input id="execSearch" type="search" placeholder="RUT, nombre, alumno o estado">
+              </label>
               <select id="execStateFilter"><option value="">Todos los estados</option></select>
               <select id="execContactFilter">
                 <option value="">Todo contacto</option>
@@ -574,6 +577,6 @@
 
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="data/app-data.js?v=20260604-1"></script>
-    <script src="assets/js/app.js?v=20260608-demo2"></script>
+    <script src="assets/js/app.js?v=20260609-jefatura1"></script>
   </body>
 </html>
