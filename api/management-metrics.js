@@ -73,26 +73,44 @@ async function optionalRows(path) {
   }
 }
 
-async function fetchAllFast(path, pageSize = 10000, concurrency = 5) {
+async function fetchAllFast(path, pageSize = 1000, concurrency = 5) {
   const first = await supabaseFetchWithCount(path, {
     headers: { Range: `0-${pageSize - 1}` },
   });
   const rows = first.rows || [];
-  const count = Number(first.count || rows.length);
-  if (rows.length >= count || rows.length < pageSize) return rows;
-
-  const ranges = [];
-  for (let from = pageSize; from < count; from += pageSize) {
-    ranges.push([from, Math.min(from + pageSize - 1, count - 1)]);
+  const count = Number(first.count);
+  if (Number.isFinite(count)) {
+    if (rows.length >= count || rows.length < pageSize) return rows;
+    const ranges = [];
+    for (let from = pageSize; from < count; from += pageSize) {
+      ranges.push([from, Math.min(from + pageSize - 1, count - 1)]);
+    }
+    await fetchRanges(path, ranges, rows, concurrency);
+    return rows;
   }
+
+  let from = pageSize;
+  while (rows.length >= from) {
+    const ranges = Array.from({ length: concurrency }, (_, index) => {
+      const start = from + (index * pageSize);
+      return [start, start + pageSize - 1];
+    });
+    const before = rows.length;
+    await fetchRanges(path, ranges, rows, concurrency);
+    if (rows.length === before || rows.length - before < pageSize * concurrency) break;
+    from += pageSize * concurrency;
+  }
+  return rows;
+}
+
+async function fetchRanges(path, ranges, targetRows, concurrency = 5) {
   for (let index = 0; index < ranges.length; index += concurrency) {
     const group = ranges.slice(index, index + concurrency);
     const pages = await Promise.all(group.map(([from, to]) => supabaseFetch(path, {
       headers: { Range: `${from}-${to}` },
     })));
-    pages.forEach((page) => rows.push(...page));
+    pages.forEach((page) => targetRows.push(...page));
   }
-  return rows;
 }
 
 function filterByAgreement(rows, agreementsByDebtor, filters) {
