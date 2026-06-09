@@ -44,6 +44,8 @@ const store = {
   internalUsers: [],
   health: null,
   healthLoading: false,
+  managementMetrics: null,
+  managementMetricsLoading: false,
   remoteWarnings: {},
 };
 
@@ -67,6 +69,8 @@ let informaticoSearchCache = new Map();
 let informaticoSortedDebtors = null;
 let informaticoPortfolioRequestId = 0;
 let informaticoPortfolioLoading = false;
+let managementMetricsTimer = null;
+let managementMetricsRequestId = 0;
 let internalUsersLoading = false;
 const remoteLoadedDebtors = new Set();
 const remoteLoadingDebtors = new Set();
@@ -880,9 +884,13 @@ function renderBars(id, rows, formatter = fmtNum.format) {
 }
 
 function renderDebtBellCurve(debtors) {
+  renderDebtBellCurveValues(debtors.map((debtor) => Number(debtor.deudaTotal || 0)));
+}
+
+function renderDebtBellCurveValues(rawValues) {
   const root = $("debtBellCurve");
   if (!root) return;
-  const values = debtors.map((debtor) => Number(debtor.deudaTotal || 0)).filter((value) => value > 0);
+  const values = rawValues.map((value) => Number(value || 0)).filter((value) => value > 0);
   if (values.length < 5) {
     root.innerHTML = `<div class="detail-empty">Sin datos suficientes para la distribución.</div>`;
     return;
@@ -3409,7 +3417,99 @@ function filteredReportEntries() {
   return store.entries.filter((entry) => (!from || entry.date >= from) && (!to || entry.date <= to));
 }
 
-function renderManagement() {
+function managementMetricsParams() {
+  const params = new URLSearchParams();
+  const values = {
+    from: $("reportFrom")?.value || "",
+    to: $("reportTo")?.value || "",
+    state: $("reportStateFilter")?.value || "",
+    agreement: $("reportAgreementFilter")?.value || "",
+    assignment: $("reportAssignmentFilter")?.value || "",
+    minDebt: parseMoney($("reportDebtMin")?.value || ""),
+    maxDebt: parseMoney($("reportDebtMax")?.value || ""),
+  };
+  Object.entries(values).forEach(([key, value]) => {
+    if (value) params.set(key, String(value));
+  });
+  return params;
+}
+
+function managementMetricsSignature() {
+  return managementMetricsParams().toString();
+}
+
+function scheduleManagementMetricsLoad() {
+  window.clearTimeout(managementMetricsTimer);
+  managementMetricsTimer = window.setTimeout(loadManagementMetrics, 220);
+}
+
+async function loadManagementMetrics() {
+  if (!session?.authPassword || session.role !== "jefatura" || data.demo) return false;
+  const signature = managementMetricsSignature();
+  const requestId = ++managementMetricsRequestId;
+  store.managementMetricsLoading = true;
+  setText("generatedAt", "calculando metricas globales...");
+  try {
+    const json = await requestJson(`/api/management-metrics?${signature}`, {
+      headers: operationalApiHeaders(),
+    });
+    if (requestId !== managementMetricsRequestId) return false;
+    store.managementMetrics = { ...(json.metrics || {}), signature };
+    store.managementMetricsLoading = false;
+    renderManagement({ skipRemote: true });
+    return true;
+  } catch (error) {
+    if (requestId !== managementMetricsRequestId) return false;
+    store.managementMetricsLoading = false;
+    setText("generatedAt", `metricas globales no disponibles: ${error.message || "error"}`);
+    return false;
+  }
+}
+
+function renderManagementMetrics(metrics) {
+  const totals = metrics.totals || {};
+  setText("kpiTotal", fmtNum.format(totals.totalRegistros || 0));
+  setText("kpiCapital", fmtMoney.format(totals.saldoCapital || 0));
+  setText("kpiOferta", fmtMoney.format(totals.montoOferta || 0));
+  setText("kpiCollected", fmtMoney.format(totals.collected || 0));
+  setText("kpiLostCapital", fmtMoney.format(totals.lostCapital || 0));
+  setText("kpiEntries", fmtNum.format(totals.entries || 0));
+  setText("kpiManagedRate", `${totals.managedRate || 0}%`);
+  setText("kpiReceipts", fmtNum.format(totals.receipts || 0));
+  setText("kpiActiveAgreements", fmtNum.format(totals.activeAgreements || 0));
+  setText("kpiAgreementBalance", fmtMoney.format(totals.agreementBalance || 0));
+  setText("generatedAt", `metricas globales ${new Date(metrics.generatedAt || Date.now()).toLocaleString("es-CL")}`);
+  setText("withPhone", fmtNum.format(totals.withPhone || 0));
+  setText("withEmail", fmtNum.format(totals.withEmail || 0));
+  setText("withoutContact", fmtNum.format(totals.withoutContact || 0));
+
+  renderBars("stateBars", metrics.bars?.states || []);
+  renderBars("managementBars", metrics.bars?.results || []);
+  renderBars("channelBars", metrics.bars?.channels || []);
+  renderBars("funnelBars", metrics.bars?.funnel || []);
+  renderBars("topDebtBars", metrics.bars?.topDebt || [], fmtMoney.format);
+  renderDebtBellCurveValues(metrics.distribution || []);
+  renderBars("bankSourceBars", metrics.bars?.bankSource || [], fmtMoney.format);
+  renderContactDonutCounts({
+    phone: totals.withPhone || 0,
+    emailOnly: totals.emailOnly || 0,
+    none: totals.withoutContact || 0,
+  });
+  renderCriticalIndicatorsMetrics(totals);
+}
+
+function renderCriticalIndicatorsMetrics(totals = {}) {
+  $("criticalIndicators").innerHTML = `
+    ${indicator("Capital en riesgo", fmtMoney.format(totals.saldoCapital || 0))}
+    ${indicator("Sin contactabilidad", `${fmtNum.format(totals.withoutContact || 0)} casos`)}
+    ${indicator("Promesas de pago", fmtNum.format(totals.promiseCount || 0))}
+    ${indicator("Evidencias de pago", fmtNum.format(totals.paidEvidence || 0))}
+    ${indicator("Convenios activos", fmtNum.format(totals.activeAgreements || 0))}
+    ${indicator("Capital condonado estimado", fmtMoney.format(totals.lostCapital || 0))}
+  `;
+}
+
+function renderManagement(options = {}) {
   const debtors = filteredManagementDebtors();
   const entries = filteredReportEntries();
   const resultCounts = countBy(entries, "result");
@@ -3462,6 +3562,13 @@ function renderManagement() {
   renderBars("bankSourceBars", bankSourcePairs(), fmtMoney.format);
   renderContactDonut(debtors);
   renderCriticalIndicators(debtors, entries, offerRows, receipts, lostCapital);
+  const signature = managementMetricsSignature();
+  if (store.managementMetrics?.signature === signature) {
+    renderManagementMetrics(store.managementMetrics);
+  } else if (session?.role === "jefatura" && !data.demo) {
+    setText("generatedAt", store.managementMetricsLoading ? "calculando metricas globales..." : "metricas globales pendientes");
+  }
+  if (!options.skipRemote && session?.role === "jefatura" && !data.demo) scheduleManagementMetricsLoad();
 }
 
 function displayState(debtor) {
@@ -3510,6 +3617,10 @@ function renderContactDonut(debtors) {
   const phone = debtors.filter((d) => d.telefonos.length).length;
   const emailOnly = debtors.filter((d) => !d.telefonos.length && d.correos.length).length;
   const none = debtors.filter((d) => !d.telefonos.length && !d.correos.length).length;
+  renderContactDonutCounts({ phone, emailOnly, none });
+}
+
+function renderContactDonutCounts({ phone = 0, emailOnly = 0, none = 0 } = {}) {
   const total = Math.max(phone + emailOnly + none, 1);
   const p1 = (phone / total) * 100;
   const p2 = p1 + (emailOnly / total) * 100;
