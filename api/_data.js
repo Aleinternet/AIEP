@@ -387,4 +387,5 @@ module.exports = {
   normalizeUsername,
   supabaseFetch,
   supabaseFetchAll,
+  supabaseFetchWithCount,
 };

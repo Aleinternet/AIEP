@@ -1,6 +1,6 @@
 const { authErrorResponse, requireUser } = require("./_auth");
 const { demoPortfolio } = require("./_demo");
-const { supabaseFetchAll } = require("./_data");
+const { supabaseFetch, supabaseFetchWithCount } = require("./_data");
 
 function numberParam(value, fallback = 0) {
   const parsed = Number(String(value || "").replace(/[^\d-]/g, ""));
@@ -67,10 +67,32 @@ function buildEntriesPath(filters) {
 
 async function optionalRows(path) {
   try {
-    return await supabaseFetchAll(path);
+    return await fetchAllFast(path);
   } catch {
     return [];
   }
+}
+
+async function fetchAllFast(path, pageSize = 10000, concurrency = 5) {
+  const first = await supabaseFetchWithCount(path, {
+    headers: { Range: `0-${pageSize - 1}` },
+  });
+  const rows = first.rows || [];
+  const count = Number(first.count || rows.length);
+  if (rows.length >= count || rows.length < pageSize) return rows;
+
+  const ranges = [];
+  for (let from = pageSize; from < count; from += pageSize) {
+    ranges.push([from, Math.min(from + pageSize - 1, count - 1)]);
+  }
+  for (let index = 0; index < ranges.length; index += concurrency) {
+    const group = ranges.slice(index, index + concurrency);
+    const pages = await Promise.all(group.map(([from, to]) => supabaseFetch(path, {
+      headers: { Range: `${from}-${to}` },
+    })));
+    pages.forEach((page) => rows.push(...page));
+  }
+  return rows;
 }
 
 function filterByAgreement(rows, agreementsByDebtor, filters) {
@@ -161,7 +183,7 @@ function buildMetrics({ debtors, contacts, entries, agreements, payments, files,
 
 async function loadRealMetrics(filters) {
   const [rawDebtors, rawAgreements, contacts, entries, payments, files, allocations] = await Promise.all([
-    supabaseFetchAll(buildDebtorPath(filters)),
+    fetchAllFast(buildDebtorPath(filters)),
     optionalRows("agreements?select=id,debtor_id,type,status,agreed_amount,down_payment,deleted_at&deleted_at=is.null"),
     optionalRows("contacts?select=debtor_id,type&deleted_at=is.null"),
     optionalRows(buildEntriesPath(filters)),
