@@ -2,6 +2,12 @@ const { authErrorResponse, requireUser } = require("./_auth");
 const { demoPortfolio } = require("./_demo");
 const { supabaseFetch } = require("./_data");
 
+const METRICS_CACHE_TTL_MS = Number(process.env.MANAGEMENT_METRICS_CACHE_MS || 10 * 60 * 1000);
+const metricsCache = globalThis.__aiepManagementMetricsCache || new Map();
+const pendingMetrics = globalThis.__aiepManagementMetricsPending || new Map();
+globalThis.__aiepManagementMetricsCache = metricsCache;
+globalThis.__aiepManagementMetricsPending = pendingMetrics;
+
 function numberParam(value, fallback = 0) {
   const parsed = Number(String(value || "").replace(/[^\d-]/g, ""));
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -190,9 +196,18 @@ function buildMetrics({ debtors, contacts, entries, agreements, payments, files,
   };
 }
 
+function isSuspiciousRpcContactability(metrics) {
+  const totals = metrics?.totals || {};
+  const total = Number(totals.totalRegistros || 0);
+  const withPhone = Number(totals.withPhone || 0);
+  const withEmail = Number(totals.withEmail || 0);
+  const withoutContact = Number(totals.withoutContact || 0);
+  return total > 1000 && withPhone === 0 && withEmail === 0 && withoutContact >= Math.floor(total * 0.95);
+}
+
 async function loadRealMetrics(filters) {
   const rpcMetrics = await loadRpcMetrics(filters);
-  if (rpcMetrics) return rpcMetrics;
+  if (rpcMetrics && !isSuspiciousRpcContactability(rpcMetrics)) return rpcMetrics;
 
   const [rawDebtors, rawAgreements, contacts, entries, payments, files, allocations] = await Promise.all([
     fetchAllFast(buildDebtorPath(filters)),
@@ -220,6 +235,33 @@ async function loadRealMetrics(filters) {
     allocations,
     generatedAt: new Date().toISOString(),
   });
+}
+
+function cacheKey(user, filters) {
+  return JSON.stringify({
+    demo: Boolean(user.demo),
+    role: user.role,
+    username: user.demo ? user.username : "",
+    filters,
+  });
+}
+
+async function loadMetricsCached(user, filters) {
+  const key = cacheKey(user, filters);
+  const cached = metricsCache.get(key);
+  if (cached && Date.now() - cached.savedAt < METRICS_CACHE_TTL_MS) {
+    return { ...cached.metrics, cache: { hit: true, savedAt: new Date(cached.savedAt).toISOString() } };
+  }
+  if (pendingMetrics.has(key)) return pendingMetrics.get(key);
+  const promise = Promise.resolve()
+    .then(() => (user.demo ? demoMetrics(user, filters) : loadRealMetrics(filters)))
+    .then((metrics) => {
+      metricsCache.set(key, { savedAt: Date.now(), metrics });
+      return metrics;
+    })
+    .finally(() => pendingMetrics.delete(key));
+  pendingMetrics.set(key, promise);
+  return promise;
 }
 
 async function loadRpcMetrics(filters) {
@@ -324,7 +366,7 @@ module.exports = async function handler(req, res) {
       minDebt: numberParam(req.query.minDebt, 0),
       maxDebt: numberParam(req.query.maxDebt, 0),
     };
-    const metrics = user.demo ? demoMetrics(user, filters) : await loadRealMetrics(filters);
+    const metrics = await loadMetricsCached(user, filters);
     res.status(200).json({ ok: true, metrics });
   } catch (error) {
     authErrorResponse(res, error);

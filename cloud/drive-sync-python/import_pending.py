@@ -80,6 +80,28 @@ def split_values(value):
     ]
 
 
+def email_values(value):
+    raw = str(value or "")
+    matches = re.findall(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", raw, flags=re.I)
+    if matches:
+        return matches
+    return split_values(raw)
+
+
+def phone_values(value):
+    raw = str(value or "")
+    groups = re.findall(r"\d+", raw)
+    long_groups = [group for group in groups if len(group) >= 8]
+    if len(long_groups) > 1:
+        return long_groups
+    joined = re.sub(r"\D", "", raw)
+    if not joined:
+        return []
+    if len(joined) > 11 and len(joined) % 9 == 0:
+        return [joined[index:index + 9] for index in range(0, len(joined), 9)]
+    return [joined]
+
+
 def numbered_values(row, prefix, limit):
     values = []
     for index in range(1, limit + 1):
@@ -140,18 +162,20 @@ def map_debtor(row):
 
 
 def map_contacts(row, debtor_id):
-    emails = (
-        split_values(find_value(row, ["correo", "correos", "mail", "email", "e-mail"]))
+    email_sources = (
+        [find_value(row, ["correo", "correos", "mail", "email", "e-mail"])]
         + numbered_values(row, "correo", 10)
         + numbered_values(row, "email", 10)
         + numbered_values(row, "mail", 10)
     )
-    phones = (
-        split_values(find_value(row, ["telefono", "telefonos", "celular", "celulares", "fono"]))
+    phone_sources = (
+        [find_value(row, ["telefono", "telefonos", "celular", "celulares", "fono"])]
         + numbered_values(row, "telefono", 20)
         + numbered_values(row, "celular", 20)
         + numbered_values(row, "fono", 20)
     )
+    emails = [item for source in email_sources for item in email_values(source)]
+    phones = [item for source in phone_sources for item in phone_values(source)]
 
     contacts = []
     for value in emails:

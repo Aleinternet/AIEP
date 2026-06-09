@@ -30,6 +30,13 @@ const TRANSFER_DETAILS = [
   "RUT 76.976.117-9",
   "Cuenta Corriente 27826341",
 ];
+const MANAGEMENT_METRICS_CACHE_VERSION = "20260609-contact-v2";
+
+function readManagementMetricsCache() {
+  const cache = readJson("abg_management_metrics_cache", null);
+  if (!cache || cache.version !== MANAGEMENT_METRICS_CACHE_VERSION || !cache.metrics) return null;
+  return cache.metrics;
+}
 
 const store = {
   entries: readJson("abg_entries", []),
@@ -44,7 +51,7 @@ const store = {
   internalUsers: [],
   health: null,
   healthLoading: false,
-  managementMetrics: null,
+  managementMetrics: readManagementMetricsCache(),
   managementMetricsLoading: false,
   remoteWarnings: {},
 };
@@ -3526,6 +3533,11 @@ async function loadManagementMetrics(useFilters = true) {
     });
     if (requestId !== managementMetricsRequestId) return false;
     store.managementMetrics = { ...(json.metrics || {}), signature };
+    writeJson("abg_management_metrics_cache", {
+      version: MANAGEMENT_METRICS_CACHE_VERSION,
+      savedAt: new Date().toISOString(),
+      metrics: store.managementMetrics,
+    });
     store.managementMetricsLoading = false;
     if (session.role === "informatico") renderInformaticoHome();
     else renderManagement({ skipRemote: true });
