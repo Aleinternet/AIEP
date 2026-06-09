@@ -2,6 +2,7 @@ import csv
 import io
 import os
 import re
+import time
 from datetime import datetime, timezone
 
 import openpyxl
@@ -17,6 +18,7 @@ SUPPORTED_MIME_TYPES = {
     "text/csv",
     "text/plain",
 }
+RETRYABLE_SUPABASE_STATUS = {408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524}
 
 
 def normalize_header(value):
@@ -238,7 +240,34 @@ def supabase_headers():
     }
 
 
-def supabase_upsert(table, rows, conflict, batch_size=100):
+def post_supabase_batch(url, table, batch, min_batch_size=25, max_attempts=6):
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = requests.post(url, headers=supabase_headers(), json=batch, timeout=120)
+        except requests.RequestException as exc:
+            if attempt >= max_attempts:
+                if len(batch) > min_batch_size:
+                    midpoint = len(batch) // 2
+                    return post_supabase_batch(url, table, batch[:midpoint], min_batch_size, max_attempts) + post_supabase_batch(url, table, batch[midpoint:], min_batch_size, max_attempts)
+                raise RuntimeError(f"Supabase {table}: error de red {exc}") from exc
+            time.sleep(min(45, 2 ** attempt))
+            continue
+
+        if response.status_code < 400:
+            return len(batch)
+
+        if response.status_code in RETRYABLE_SUPABASE_STATUS and attempt < max_attempts:
+            time.sleep(min(45, 2 ** attempt))
+            continue
+
+        if response.status_code in RETRYABLE_SUPABASE_STATUS and len(batch) > min_batch_size:
+            midpoint = len(batch) // 2
+            return post_supabase_batch(url, table, batch[:midpoint], min_batch_size, max_attempts) + post_supabase_batch(url, table, batch[midpoint:], min_batch_size, max_attempts)
+
+        raise RuntimeError(f"Supabase {table}: {response.status_code} {response.text[:1000]}")
+
+
+def supabase_upsert(table, rows, conflict, batch_size=500):
     if not rows:
         return 0
     base_url = os.environ["SUPABASE_URL"].rstrip("/")
@@ -246,10 +275,7 @@ def supabase_upsert(table, rows, conflict, batch_size=100):
     sent = 0
     for index in range(0, len(rows), batch_size):
         batch = rows[index:index + batch_size]
-        response = requests.post(url, headers=supabase_headers(), json=batch, timeout=120)
-        if response.status_code >= 400:
-            raise RuntimeError(f"Supabase {table}: {response.status_code} {response.text}")
-        sent += len(batch)
+        sent += post_supabase_batch(url, table, batch)
     return sent
 
 
