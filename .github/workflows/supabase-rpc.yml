@@ -1,0 +1,31 @@
+name: Instalar RPC Supabase
+
+on:
+  workflow_dispatch:
+
+jobs:
+  apply-rpc:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Verificar conexion SQL
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "::error::Falta el secret SUPABASE_DB_URL. Debe ser la conexion directa PostgreSQL de Supabase."
+            exit 1
+          fi
+
+      - name: Instalar cliente PostgreSQL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Aplicar RPC de metricas
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f cloud/supabase/migrations/20260609_management_metrics_rpc.sql
