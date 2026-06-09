@@ -30,7 +30,7 @@ const TRANSFER_DETAILS = [
   "RUT 76.976.117-9",
   "Cuenta Corriente 27826341",
 ];
-const MANAGEMENT_METRICS_CACHE_VERSION = "20260609-contact-v2";
+const MANAGEMENT_METRICS_CACHE_VERSION = "20260609-contact-v3";
 
 function readManagementMetricsCache() {
   const cache = readJson("abg_management_metrics_cache", null);

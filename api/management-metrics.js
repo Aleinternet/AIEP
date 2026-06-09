@@ -49,6 +49,12 @@ function safeIdSet(rows) {
   return new Set(rows.map((row) => row.id).filter(Boolean));
 }
 
+function chunkArray(values, size) {
+  const chunks = [];
+  for (let index = 0; index < values.length; index += size) chunks.push(values.slice(index, index + size));
+  return chunks;
+}
+
 function buildDebtorPath(filters) {
   const params = new URLSearchParams({
     select: "id,estado,saldo_capital,deuda_total,monto_oferta,asignacion,usuario,equipo,nombre_titular,rut_titular,tramo",
@@ -107,6 +113,30 @@ async function fetchRanges(path, ranges, targetRows, concurrency = 5) {
     })));
     pages.forEach((page) => targetRows.push(...page));
   }
+}
+
+function contactPathForDebtors(ids) {
+  if (!ids.length) return "";
+  const quoted = ids.map((id) => `"${String(id).replace(/"/g, '\\"')}"`).join(",");
+  const params = new URLSearchParams({
+    select: "debtor_id,type",
+    debtor_id: `in.(${quoted})`,
+    deleted_at: "is.null",
+  });
+  return `contacts?${params.toString()}`;
+}
+
+async function contactsForDebtors(debtors, chunkSize = 500, concurrency = 8) {
+  const ids = [...safeIdSet(debtors)];
+  if (!ids.length) return [];
+  const contacts = [];
+  const chunks = chunkArray(ids, chunkSize);
+  for (let index = 0; index < chunks.length; index += concurrency) {
+    const group = chunks.slice(index, index + concurrency);
+    const pages = await Promise.all(group.map((idsChunk) => fetchAllFast(contactPathForDebtors(idsChunk))));
+    pages.forEach((page) => contacts.push(...page));
+  }
+  return contacts;
 }
 
 function filterByAgreement(rows, agreementsByDebtor, filters) {
@@ -209,10 +239,9 @@ async function loadRealMetrics(filters) {
   const rpcMetrics = await loadRpcMetrics(filters);
   if (rpcMetrics && !isSuspiciousRpcContactability(rpcMetrics)) return rpcMetrics;
 
-  const [rawDebtors, rawAgreements, contacts, entries, payments, files, allocations] = await Promise.all([
+  const [rawDebtors, rawAgreements, entries, payments, files, allocations] = await Promise.all([
     fetchAllFast(buildDebtorPath(filters)),
     optionalRows("agreements?select=id,debtor_id,type,status,agreed_amount,down_payment,deleted_at&deleted_at=is.null"),
-    optionalRows("contacts?select=debtor_id,type&deleted_at=is.null"),
     optionalRows(buildEntriesPath(filters)),
     optionalRows("agreement_payments?select=agreement_id,paid_amount,status,deleted_at&deleted_at=is.null"),
     optionalRows("files?select=debtor_id,kind,verified"),
@@ -225,6 +254,7 @@ async function loadRealMetrics(filters) {
     agreementsByDebtor.get(agreement.debtor_id).push(agreement);
   }
   const debtors = filterByAgreement(rawDebtors, agreementsByDebtor, filters);
+  const contacts = await contactsForDebtors(debtors).catch(() => []);
   return buildMetrics({
     debtors,
     contacts,
@@ -256,7 +286,7 @@ async function loadMetricsCached(user, filters) {
   const promise = Promise.resolve()
     .then(() => (user.demo ? demoMetrics(user, filters) : loadRealMetrics(filters)))
     .then((metrics) => {
-      metricsCache.set(key, { savedAt: Date.now(), metrics });
+      if (!isSuspiciousRpcContactability(metrics)) metricsCache.set(key, { savedAt: Date.now(), metrics });
       return metrics;
     })
     .finally(() => pendingMetrics.delete(key));
