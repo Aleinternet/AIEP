@@ -176,6 +176,7 @@ function buildMetrics({ debtors, contacts, entries, agreements, payments, files,
       states: countPairs(debtors, (row) => displayState(row, activeAgreementIds)).slice(0, 10),
       results: countPairs(entriesForDebtors, (row) => row.result),
       channels: countPairs(entriesForDebtors, (row) => row.channel),
+      assignments: countPairs(debtors, (row) => row.asignacion || row.usuario || row.equipo).slice(0, 40),
       funnel: [
         ["Cartera total", debtors.length],
         ["Con gestion", managedDebtorIds.size],

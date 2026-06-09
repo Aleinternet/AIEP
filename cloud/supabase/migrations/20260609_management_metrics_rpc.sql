@@ -137,6 +137,13 @@ channel_rows as (
   group by channel
   order by value desc
 ),
+assignment_rows as (
+  select coalesce(nullif(asignacion, ''), nullif(usuario, ''), nullif(equipo, ''), 'Sin asignacion') as label, count(*)::bigint as value
+  from filtered_debtors
+  group by 1
+  order by value desc
+  limit 40
+),
 top_debt_rows as (
   select coalesce(nullif(nombre_titular, ''), rut_titular, id) as label, deuda_total as value
   from filtered_debtors
@@ -198,6 +205,7 @@ select jsonb_build_object(
     'states', coalesce((select jsonb_agg(jsonb_build_array(label, value) order by value desc) from state_rows), '[]'::jsonb),
     'results', coalesce((select jsonb_agg(jsonb_build_array(label, value) order by value desc) from result_rows), '[]'::jsonb),
     'channels', coalesce((select jsonb_agg(jsonb_build_array(label, value) order by value desc) from channel_rows), '[]'::jsonb),
+    'assignments', coalesce((select jsonb_agg(jsonb_build_array(label, value) order by value desc) from assignment_rows), '[]'::jsonb),
     'funnel', jsonb_build_array(
       jsonb_build_array('Cartera total', totals.total_registros),
       jsonb_build_array('Con gestion', totals.managed_debtor_count),

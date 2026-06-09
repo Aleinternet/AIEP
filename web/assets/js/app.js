@@ -2694,6 +2694,66 @@ function renderInformaticoAssignmentMatrix() {
   `).join("") : `<tr><td colspan="${matrix.remesas.length + 2}">Sin asignaciones cargadas desde cartera.</td></tr>`;
 }
 
+function metricRows(rows = []) {
+  return rows.map(([label, value]) => [String(label || "Sin dato"), Number(value || 0)]);
+}
+
+function renderLoadingBlock(id, message = "Calculando metricas globales...") {
+  const root = $(id);
+  if (!root) return;
+  root.innerHTML = `<div class="detail-empty">${escapeHtml(message)}</div>`;
+}
+
+function renderInformaticoAssignmentMatrixFromMetrics(metrics) {
+  const head = $("itAssignmentMatrixHead");
+  const rowsRoot = $("itAssignmentMatrixRows");
+  if (!head || !rowsRoot) return;
+  const rows = metricRows(metrics?.bars?.assignments || []);
+  head.innerHTML = `<tr><th>Asignado</th><th>Total cartera</th></tr>`;
+  rowsRoot.innerHTML = rows.length ? rows.map(([name, total]) => `
+    <tr>
+      <td><strong>${escapeHtml(name)}</strong></td>
+      <td><strong>${fmtNum.format(total)}</strong></td>
+    </tr>
+  `).join("") : `<tr><td colspan="2">Sin asignaciones en metricas globales.</td></tr>`;
+}
+
+function renderInformaticoAssignmentMatrixLoading(message = "Calculando metricas globales...") {
+  const head = $("itAssignmentMatrixHead");
+  const rowsRoot = $("itAssignmentMatrixRows");
+  if (!head || !rowsRoot) return;
+  head.innerHTML = `<tr><th>Asignado</th><th>Total cartera</th></tr>`;
+  rowsRoot.innerHTML = `<tr><td colspan="2">${escapeHtml(message)}</td></tr>`;
+}
+
+function renderInformaticoHomeMetrics(metrics) {
+  const totals = metrics?.totals || {};
+  const assignments = metricRows(metrics?.bars?.assignments || []);
+  setText("itKpiTotal", fmtNum.format(totals.totalRegistros || 0));
+  setText("itKpiDebt", fmtMoney.format(totals.deudaTotal || 0));
+  setText("itKpiExecutives", fmtNum.format(assignments.length));
+  setText("itKpiNoContact", fmtNum.format(totals.withoutContact || 0));
+  renderBars("itOperationalBars", [
+    ["Total cartera", totals.totalRegistros || 0],
+    ["Con telefono", totals.withPhone || 0],
+    ["Con correo", totals.withEmail || 0],
+    ["Sin contacto", totals.withoutContact || 0],
+    ["Convenios activos", totals.activeAgreements || 0],
+  ]);
+  renderBars("itAssignmentBars", assignments);
+  renderInformaticoAssignmentMatrixFromMetrics(metrics);
+}
+
+function renderInformaticoHomeLoading(message = "calculando metricas globales...") {
+  setText("itKpiTotal", "...");
+  setText("itKpiDebt", "...");
+  setText("itKpiExecutives", "...");
+  setText("itKpiNoContact", "...");
+  renderLoadingBlock("itOperationalBars", message);
+  renderLoadingBlock("itAssignmentBars", message);
+  renderInformaticoAssignmentMatrixLoading(message);
+}
+
 function healthFallbackChecks() {
   return [
     { name: "Google Drive", status: "loading", detail: "Verificando carpeta AIEP y permisos de cuenta de servicio." },
@@ -2728,6 +2788,19 @@ function renderHealthChecklist() {
 }
 
 function renderInformaticoHome() {
+  renderHealthChecklist();
+  if (!store.health && !store.healthLoading) loadHealthFromApi();
+  renderRecentAudit("itRecentAudit", 6);
+  if (!data.demo) {
+    const signature = managementMetricsSignature(false);
+    if (store.managementMetrics?.signature === signature) {
+      renderInformaticoHomeMetrics(store.managementMetrics);
+    } else {
+      renderInformaticoHomeLoading(store.managementMetricsLoading ? "calculando metricas globales..." : "metricas globales pendientes");
+      scheduleManagementMetricsLoad(false);
+    }
+    return;
+  }
   const totalDebt = data.debtors.reduce((sum, debtor) => sum + Number(debtor.deudaTotal || 0), 0);
   const noContact = data.debtors.filter((debtor) => !(debtor.telefonos || []).length && !(debtor.correos || []).length).length;
   const groups = assignmentSummaryGroups();
@@ -2746,9 +2819,6 @@ function renderInformaticoHome() {
   ]);
   renderBars("itAssignmentBars", groups.map(([name, row]) => [name, row.count]));
   renderInformaticoAssignmentMatrix();
-  renderHealthChecklist();
-  if (!store.health && !store.healthLoading) loadHealthFromApi();
-  renderRecentAudit("itRecentAudit", 6);
 }
 
 function filteredInformaticoDebtors(limit = 800) {
@@ -3417,8 +3487,9 @@ function filteredReportEntries() {
   return store.entries.filter((entry) => (!from || entry.date >= from) && (!to || entry.date <= to));
 }
 
-function managementMetricsParams() {
+function managementMetricsParams(useFilters = true) {
   const params = new URLSearchParams();
+  if (!useFilters) return params;
   const values = {
     from: $("reportFrom")?.value || "",
     to: $("reportTo")?.value || "",
@@ -3434,21 +3505,21 @@ function managementMetricsParams() {
   return params;
 }
 
-function managementMetricsSignature() {
-  return managementMetricsParams().toString();
+function managementMetricsSignature(useFilters = true) {
+  return managementMetricsParams(useFilters).toString();
 }
 
-function scheduleManagementMetricsLoad() {
+function scheduleManagementMetricsLoad(useFilters = true) {
   window.clearTimeout(managementMetricsTimer);
-  managementMetricsTimer = window.setTimeout(loadManagementMetrics, 220);
+  managementMetricsTimer = window.setTimeout(() => loadManagementMetrics(useFilters), 220);
 }
 
-async function loadManagementMetrics() {
-  if (!session?.authPassword || session.role !== "jefatura" || data.demo) return false;
-  const signature = managementMetricsSignature();
+async function loadManagementMetrics(useFilters = true) {
+  if (!session?.authPassword || !["jefatura", "informatico"].includes(session.role) || data.demo) return false;
+  const signature = managementMetricsSignature(useFilters);
   const requestId = ++managementMetricsRequestId;
   store.managementMetricsLoading = true;
-  setText("generatedAt", "calculando metricas globales...");
+  if (session.role === "jefatura") setText("generatedAt", "calculando metricas globales...");
   try {
     const json = await requestJson(`/api/management-metrics?${signature}`, {
       headers: operationalApiHeaders(),
@@ -3456,12 +3527,14 @@ async function loadManagementMetrics() {
     if (requestId !== managementMetricsRequestId) return false;
     store.managementMetrics = { ...(json.metrics || {}), signature };
     store.managementMetricsLoading = false;
-    renderManagement({ skipRemote: true });
+    if (session.role === "informatico") renderInformaticoHome();
+    else renderManagement({ skipRemote: true });
     return true;
   } catch (error) {
     if (requestId !== managementMetricsRequestId) return false;
     store.managementMetricsLoading = false;
-    setText("generatedAt", `metricas globales no disponibles: ${error.message || "error"}`);
+    if (session.role === "jefatura") setText("generatedAt", `metricas globales no disponibles: ${error.message || "error"}`);
+    if (session.role === "informatico") renderInformaticoHomeLoading(`metricas globales no disponibles: ${error.message || "error"}`);
     return false;
   }
 }
@@ -3509,7 +3582,39 @@ function renderCriticalIndicatorsMetrics(totals = {}) {
   `;
 }
 
+function renderManagementLoading(message = "calculando metricas globales...") {
+  ["kpiTotal", "kpiCapital", "kpiOferta", "kpiCollected", "kpiLostCapital", "kpiEntries", "kpiManagedRate", "kpiReceipts", "kpiActiveAgreements", "kpiAgreementBalance", "withPhone", "withEmail", "withoutContact"]
+    .forEach((id) => setText(id, "..."));
+  setText("generatedAt", message);
+  ["stateBars", "managementBars", "channelBars", "funnelBars", "topDebtBars", "bankSourceBars"]
+    .forEach((id) => renderLoadingBlock(id, message));
+  const donut = $("contactDonut");
+  if (donut) donut.style.background = "conic-gradient(#d8e0ea 0 100%)";
+  const legend = $("contactLegend");
+  if (legend) legend.innerHTML = `<span><i style="background:#d8e0ea"></i>${escapeHtml(message)}</span>`;
+  renderLoadingBlock("debtBellCurve", message);
+  const critical = $("criticalIndicators");
+  if (critical) critical.innerHTML = `
+    ${indicator("Capital en riesgo", "...")}
+    ${indicator("Sin contactabilidad", "...")}
+    ${indicator("Promesas de pago", "...")}
+    ${indicator("Evidencias de pago", "...")}
+    ${indicator("Convenios activos", "...")}
+    ${indicator("Capital condonado estimado", "...")}
+  `;
+}
+
 function renderManagement(options = {}) {
+  if (session?.role === "jefatura" && !data.demo) {
+    const signature = managementMetricsSignature(true);
+    if (store.managementMetrics?.signature === signature) {
+      renderManagementMetrics(store.managementMetrics);
+    } else {
+      renderManagementLoading(store.managementMetricsLoading ? "calculando metricas globales..." : "metricas globales pendientes");
+    }
+    if (!options.skipRemote) scheduleManagementMetricsLoad(true);
+    return;
+  }
   const debtors = filteredManagementDebtors();
   const entries = filteredReportEntries();
   const resultCounts = countBy(entries, "result");
@@ -3562,13 +3667,6 @@ function renderManagement(options = {}) {
   renderBars("bankSourceBars", bankSourcePairs(), fmtMoney.format);
   renderContactDonut(debtors);
   renderCriticalIndicators(debtors, entries, offerRows, receipts, lostCapital);
-  const signature = managementMetricsSignature();
-  if (store.managementMetrics?.signature === signature) {
-    renderManagementMetrics(store.managementMetrics);
-  } else if (session?.role === "jefatura" && !data.demo) {
-    setText("generatedAt", store.managementMetricsLoading ? "calculando metricas globales..." : "metricas globales pendientes");
-  }
-  if (!options.skipRemote && session?.role === "jefatura" && !data.demo) scheduleManagementMetricsLoad();
 }
 
 function displayState(debtor) {
