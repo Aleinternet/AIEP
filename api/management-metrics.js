@@ -190,6 +190,9 @@ function buildMetrics({ debtors, contacts, entries, agreements, payments, files,
 }
 
 async function loadRealMetrics(filters) {
+  const rpcMetrics = await loadRpcMetrics(filters);
+  if (rpcMetrics) return rpcMetrics;
+
   const [rawDebtors, rawAgreements, contacts, entries, payments, files, allocations] = await Promise.all([
     fetchAllFast(buildDebtorPath(filters)),
     optionalRows("agreements?select=id,debtor_id,type,status,agreed_amount,down_payment,deleted_at&deleted_at=is.null"),
@@ -216,6 +219,27 @@ async function loadRealMetrics(filters) {
     allocations,
     generatedAt: new Date().toISOString(),
   });
+}
+
+async function loadRpcMetrics(filters) {
+  try {
+    const payload = {
+      p_from: filters.from || null,
+      p_to: filters.to || null,
+      p_state: filters.state || null,
+      p_agreement: filters.agreement || null,
+      p_assignment: filters.assignment || null,
+      p_min_debt: filters.minDebt || null,
+      p_max_debt: filters.maxDebt || null,
+    };
+    const result = await supabaseFetch("rpc/aiep_management_metrics", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    return Array.isArray(result) ? result[0] : result;
+  } catch {
+    return null;
+  }
 }
 
 function demoMetrics(user, filters) {
