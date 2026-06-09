@@ -1,6 +1,6 @@
 const { authErrorResponse, requireUser } = require("./_auth");
 const { demoPortfolio } = require("./_demo");
-const { supabaseFetch, supabaseFetchWithCount } = require("./_data");
+const { supabaseFetch } = require("./_data");
 
 function numberParam(value, fallback = 0) {
   const parsed = Number(String(value || "").replace(/[^\d-]/g, ""));
@@ -73,21 +73,11 @@ async function optionalRows(path) {
   }
 }
 
-async function fetchAllFast(path, pageSize = 1000, concurrency = 5) {
-  const first = await supabaseFetchWithCount(path, {
+async function fetchAllFast(path, pageSize = 1000, concurrency = 8) {
+  const rows = await supabaseFetch(path, {
     headers: { Range: `0-${pageSize - 1}` },
   });
-  const rows = first.rows || [];
-  const count = Number(first.count);
-  if (Number.isFinite(count)) {
-    if (rows.length >= count || rows.length < pageSize) return rows;
-    const ranges = [];
-    for (let from = pageSize; from < count; from += pageSize) {
-      ranges.push([from, Math.min(from + pageSize - 1, count - 1)]);
-    }
-    await fetchRanges(path, ranges, rows, concurrency);
-    return rows;
-  }
+  if (rows.length < pageSize) return rows;
 
   let from = pageSize;
   while (rows.length >= from) {
