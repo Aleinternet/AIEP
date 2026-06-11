@@ -30,6 +30,12 @@ const TRANSFER_DETAILS = [
   "RUT 76.976.117-9",
   "Cuenta Corriente 27826341",
 ];
+const DEMO_TRANSFER_DETAILS = [
+  "Banco ****",
+  "Comercial Remesa SpA ****",
+  "RUT ****",
+  "Cuenta Corriente ****",
+];
 const MANAGEMENT_METRICS_CACHE_VERSION = "20260609-contact-v3";
 
 function readManagementMetricsCache() {
@@ -1367,7 +1373,7 @@ function statusClassFromState(state) {
   const normalized = normalizeText(state);
   if (normalized.includes("convenio")) return "status-agreement";
   if (normalized.includes("pagado")) return "status-paid";
-  if (normalized.includes("acuerdo roto")) return "status-broken";
+  if (normalized.includes("acuerdo roto") || normalized.includes("cobranza judicial") || normalized.includes("judicial")) return "status-broken";
   return "status-neutral";
 }
 
@@ -2550,12 +2556,13 @@ function renderHistory(debtor) {
 function renderDebtorPortal() {
   const d = selectedDebtor;
   const offer = getOffer(d);
+  const transferDetails = d.demo ? DEMO_TRANSFER_DETAILS : TRANSFER_DETAILS;
   setText("debtorPortalName", d.nombreTitular || "Consulta de deuda");
   $("debtorPortalDebt").innerHTML = `
     <div class="debt-hero">
       <span>Deuda total pendiente</span>
       <strong>${fmtMoney.format(d.deudaTotal)}</strong>
-      <small>Estado: ${d.estado || "Pendiente"}</small>
+      <small>Estado: ${statusPillFromState(d.estado || "Pendiente")}</small>
     </div>
     ${offer ? `<div class="debtor-agreement-hero">
       <span>Convenio vigente · ${agreementTypeLabel(offer)}</span>
@@ -2595,7 +2602,7 @@ function renderDebtorPortal() {
   $("debtorPaymentBox").hidden = false;
   $("debtorPaymentBox").innerHTML = `
     <h3>Datos de transferencia</h3>
-    <p>Banco BCI<br>Comercial Remesa SpA<br>RUT 76.976.117-9<br>Cuenta Corriente 27826341</p>
+    <p>${transferDetails.map(escapeHtml).join("<br>")}</p>
     <p class="muted">${offer ? "Convenio activo. Adjunte comprobante después de transferir." : "Si realiza un pago, adjunte el comprobante para validación."}</p>
   `;
   renderDebtorUploads();

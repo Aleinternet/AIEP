@@ -120,7 +120,7 @@ function tramoFor(total) {
 
 const DEMO_DEBTORS = Array.from({ length: DEMO_TOTAL_RECORDS }, (_, offset) => {
   const index = offset + 1;
-  const status = debtorStatus(index);
+  const status = index === 1 ? "Pagado" : index === 2 ? "Cobranza Judicial" : debtorStatus(index);
   const money = demoMoney(index, status);
   const fixedRut = index === 1 ? DEMO_DEBTOR_RUTS[0] : index === 2 ? DEMO_DEBTOR_RUTS[1] : "";
   const titularRut = fixedRut || demoRut("120", index + 1000);
