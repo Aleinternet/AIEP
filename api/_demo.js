@@ -1,6 +1,6 @@
 const DEMO_PASSWORD = "demo1234";
 const DEMO_ASSIGNMENT = "DEMO CALLCENTER";
-const DEMO_DEBTOR_RUTS = ["12.345.678-5", "23.456.789-6"];
+const DEMO_DEBTOR_RUTS = ["12345678-9", "98765432-1"];
 const DEMO_TOTAL_RECORDS = 1000;
 
 function normalizeRut(value = "") {

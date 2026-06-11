@@ -1386,6 +1386,10 @@ function statusPillFromState(state) {
   return `<span class="status-pill ${statusClassFromState(state)}">${state || "Pendiente"}</span>`;
 }
 
+function displayTitularRut(debtor) {
+  return debtor?.demo ? "****" : (debtor?.rutTitular || debtor?.rutDeudor || "");
+}
+
 function agreementDotClass(debtor) {
   const agreement = getOffer(debtor);
   if (!agreement) return "";
@@ -2571,7 +2575,7 @@ function renderDebtorPortal() {
     </div>` : ""}
     <div class="debtor-identification">
       ${detailItem("Titular", d.nombreTitular)}
-      ${detailItem("RUT titular", d.rutTitular || d.rutDeudor)}
+      ${detailItem("RUT titular", displayTitularRut(d))}
       ${detailItem("Alumno", d.nombreAlumno)}
       ${detailItem("RUT alumno", d.rutAlumno)}
     </div>
@@ -2914,7 +2918,7 @@ function renderInformaticoDebtorTechDetail() {
     <div class="technical-grid">
       ${detailItem("Asignacion", assignmentName(d))}
       ${detailItem("Estado", displayState(d))}
-      ${detailItem("RUT titular", d.rutTitular || d.rutDeudor)}
+      ${detailItem("RUT titular", displayTitularRut(d))}
       ${detailItem("Titular", d.nombreTitular)}
       ${detailItem("RUT alumno", d.rutAlumno)}
       ${detailItem("Alumno", d.nombreAlumno)}
